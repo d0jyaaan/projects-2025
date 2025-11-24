@@ -7,6 +7,7 @@ END = '\033[0m'
 def main(): 
 
     game = Game()
+
     game.run()
     
 
@@ -1275,18 +1276,24 @@ class Game():
         """
         
         i = 0
+        distinct = sorted(list(set(self.players[n].player_hand)))
         # prompt user for input
         # reprompt if user input is not a number within 1 -> no of tiles in hand
-        while not(1<= i <=len(self.players[n].player_hand)+ 1):
+        while not(1<= i <= len(distinct)+ 1):
             try :
-                i = int(input(f"Throw away a tile (1-{len(self.players[n].player_hand)}): "))
+                print("Distinct tiles: ", end="")
+                for tile in distinct:
+                    print(f"{tile[0]} ", end="")
+                print("")
+                i = int(input(f"Throw away a tile (1-{len(distinct)}): "))
 
             except ValueError:
                 pass
         # remove tile from hand
-        removed = self.players[n].player_hand.pop(i-1)
+        print(distinct[i-1])
+        self.players[n].player_hand.remove(distinct[i-1])
         # add removed tile to discard pile
-        self.discard_pile.append(removed)
+        self.discard_pile.append(distinct[i-1])
 
 
     def update_state(self):

@@ -28,35 +28,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 async def on_ready():
     print("Running")
 
-HAND_VALUES = {
-            "混一色" : 3,
-            "清一色" : 7,
-            "小三元" : 5,
-            "大三元" : 8,
-            "小四喜" : 6,
-            "大四喜" : 13,
-            "字一色" : 10,
-            "花糊" : 3,
-            "八仙過海" : 8,
-            "十三幺" : 13,
-            "九子連環" : 13,
-            "天糊" : 13,
-            "地糊" : 13,
-            "人糊" : 13,
-            "七對子" : 3,
-            "碰碰糊" : 3,
-            "坎坎胡" : 8,
-            "十八羅漢": 13,
-            "清老頭" : 13,
-            "混老头" : 4
-        }
 
-# mahjong sets 
-MJSET = {"suits" : ["筒", "索", "萬"],
-            "winds" : ["東", "南", "西", "北"],
-            "dragons" : ["中", "發", "白"],
-            "flowers": ["梅","蘭","竹","菊"],
-            "seasons": ["春","夏","秋","冬"]}
 
 TILES_UNICODE = {
     # Dragons
@@ -99,6 +71,7 @@ TILES_UNICODE = {
 }
 
 MOVE_PIORITY = {
+    0 : -100,
     "Pass": 0,
     "自摸": 1,
     "吃": 2,
@@ -178,6 +151,72 @@ class Game():
         self.rob_flag = False
 
         self.start_flag = False
+
+        self.hand_values = {
+            "混一色" : 3,
+            "清一色" : 7,
+            "小三元" : 5,
+            "大三元" : 8,
+            "小四喜" : 6,
+            "大四喜" : 13,
+            "字一色" : 10,
+            "花糊" : 3,
+            "八仙過海" : 8,
+            "十三幺" : 13,
+            "九子連環" : 13,
+            "天糊" : 13,
+            "地糊" : 13,
+            "人糊" : 13,
+            "七對子" : 3,
+            "碰碰糊" : 3,
+            "坎坎胡" : 8,
+            "十八羅漢": 13,
+            "清老頭" : 13,
+            "混老头" : 4
+        }
+
+        # mahjong sets 
+        self.mjset = {"suits" : ["筒", "索", "萬"],
+                    "winds" : ["東", "南", "西", "北"],
+                    "dragons" : ["中", "發", "白"],
+                    "flowers": ["梅","蘭","竹","菊"],
+                    "seasons": ["春","夏","秋","冬"]}
+    
+
+    def game_reset(self):
+
+        """
+        Reset the entire game after a player has won / no player has won when wall runs out of tiles
+        """
+
+        self.player_turn = 0
+        self.flag_wall = False
+
+        c = copy.deepcopy(self.players)
+        
+        new_player_list = []
+        for i in range(4):
+            new_player_list.append()
+
+        # TODO
+        # reassign the players in the order of winner to player before the winner
+        # only allow chow for the player that is after the player that discarded the tile
+
+        self.players = None
+
+
+
+        self.tiles = []
+        self.discard_pile = []
+        self.move_table = [[], [], [], []]
+        self.tile_table = []
+
+        self.players_moved = []
+        self.prevailing_track = []
+        
+        self.winning_hand = None
+        self.kong_flag = 0
+        self.rob_flag = False
 
 
     def check_pong(self, n, d):
@@ -355,7 +394,7 @@ class Game():
                     copy_hand.remove(tile)
 
                 # if the tile is wind, check for prevailing wind
-                if tile[1] == "winds" and tile[0] == MJSET["winds"][self.prevailing_wind]:
+                if tile[1] == "winds" and tile[0] == self.mjset["winds"][self.prevailing_wind]:
                     copy_melded.append((tile, "碰", True))
                 
                 else:
@@ -476,7 +515,7 @@ class Game():
                 self.players[n].player_hand.sort()
                 temp_hand = copy.deepcopy(self.players[n].player_hand)
 
-                for suit in MJSET["suits"]:
+                for suit in self.mjset["suits"]:
 
                     if (f'1{suit}', 'suits') in temp_hand and (f'9{suit}', 'suits') in temp_hand:
 
@@ -508,10 +547,10 @@ class Game():
                 # Player has the terminal of each suit, each honor tile + any of the tiles
                 temp_hand = copy.deepcopy(self.players[n].player_hand)
                 count = 0
-                for tile_type in MJSET.keys():
+                for tile_type in self.mjset.keys():
                     
                     if tile_type == "suits":
-                        for suit in MJSET[tile_type]:
+                        for suit in self.mjset[tile_type]:
                             
                             if temp_hand.count((f'1{suit}', 'suits')) == 2:
                                 temp_hand.remove((f'1{suit}', 'suits'))
@@ -529,7 +568,7 @@ class Game():
 
                     elif tile_type == "winds" or tile_type == "dragons":
 
-                        for tile in MJSET[tile_type]:
+                        for tile in self.mjset[tile_type]:
 
                             if temp_hand.count((f'{tile}', f'{tile_type}')) == 2:
                                 temp_hand.remove((f'{tile}', f'{tile_type}'))
@@ -672,19 +711,22 @@ class Game():
         self.move_table = [[], [], [], []]
 
         if not (len(self.discard_pile) == 0):
+
             d = self.discard_pile[-1]
             for index in range(0, 4):
-                if self.check_pong(index, d):
-                    self.move_table[index].append(2)
-                if self.check_kong(index, d):
-                    self.move_table[index].append(3)
-                if self.check_chow(index, d) is not None:
-                    self.move_table[index].append(4)
+                # the player that just moved can't move again and can only pass
+                if not(index == self.players_moved[-1]):
+                    if self.check_pong(index, d):
+                        self.move_table[index].append(2)
+                    if self.check_kong(index, d):
+                        self.move_table[index].append(3)
+                    if self.check_chow(index, d) is not None:
+                        self.move_table[index].append(4)
 
-                self.players[index].player_hand.append(d)
-                if self.check_hu(index):
-                    self.move_table[index].append(5)
-                self.players[index].player_hand.remove(d)   
+                    self.players[index].player_hand.append(d)
+                    if self.check_hu(index):
+                        self.move_table[index].append(5)
+                    self.players[index].player_hand.remove(d)   
 
 
     def initialise(self):
@@ -795,12 +837,12 @@ class Game():
             Key : Type of Tile | Number of said tile
         """
         d = {}
-        for type in MJSET:
+        for type in self.mjset:
 
             if type == "suits":
 
                 d[type] = {}
-                for suit in MJSET[type]:
+                for suit in self.mjset[type]:
                     
                     d[type][suit] = []
                     for i in range(9):
@@ -812,7 +854,7 @@ class Game():
             elif type == "winds" or type == "dragons":
                 
                 d[type] = {}
-                for honor in MJSET[type]:
+                for honor in self.mjset[type]:
                     d[type][honor] = 0
                     
                     for i in range(4):
@@ -820,7 +862,7 @@ class Game():
 
             elif type == "flowers" or type == "seasons":
 
-                for bonus in MJSET[type]:
+                for bonus in self.mjset[type]:
                     self.tiles.append((bonus, type))
 
         # randomise the tiles
@@ -840,7 +882,7 @@ class Game():
         faan = 0
         for tile in self.players[n].player_flowers_seasons:
 
-            if MJSET[tile[1]][n] == tile[0]:
+            if self.mjset[tile[1]][n] == tile[0]:
                 faan += 1
             
         return faan
@@ -984,6 +1026,7 @@ async def run(ctx):
         # await run_game(ctx, game)
         await msg.delete()
 
+
 @bot.command()
 async def quit(ctx):
 
@@ -1100,44 +1143,56 @@ async def quit(ctx):
 
             await ctx.send(f"Vote Results : {n_true} / {4 - game.player_ids.count(None)}  \nThe game will continue.")
             await msg.delete()
-        
+
+
 @bot.command()
 # run game
 async def s(ctx):
 
+    # TODO CHOW ALLOW PREVIOUS PLAYER DISCARDED TILE ONLY
     """
     Function that handles all of mahjong gameplay loop
     """
 
     game = Game(ctx.channel.id)
     game.players = [Player(0, 512192531220398090), Player(1, 512192531220398090),Player(2, 512192531220398090),Player(3, 512192531220398090)]
+    
     # # loading bar
     # loading_bar(ctx)
+
     while True:
 
+        # game.players[0].player_hand = [
+        #     ("9筒", "suits")
+        # ]
+
         game.players[0].player_hand = [
-                ("1筒", "suits"), ("1筒", "suits"), ("1筒", "suits"),
-                ("1筒", "suits")
-            ]
+            ("1筒", "suits"), ("1筒", "suits"), ("1筒", "suits"), 
+            ("2筒", "suits"), ("2筒", "suits"), ("2筒", "suits"), 
+            ("3筒", "suits"), ("3筒", "suits"), ("3筒", "suits"), 
+            ("6筒", "suits"), ("6筒", "suits"), ("9筒", "suits"),
+            ("9筒", "suits"),  ("9筒", "suits") 
+            ]   
         
+        # initialise the game
         game.initialise()
+
+        # temporary
         game.player_ids = [512192531220398090, 512192531220398090, 512192531220398090, 512192531220398090]
         
-        
+        go_next = None
+
         while True:
-            print("MAMNBVCX")
-            # initialise the game
             
             # send each player the current game state and the discard pile (constant and wont change even if got user input)
             discard_string = discard_pile(game)
             
-            # l
+            # list of player's hand, meld and flower/ season information
             hand_list, melded_list, fs_list = game_info(game)
             
             # list of the sent messages so that it can be edited afterwards
             game_info_list = [None, None, None, None]
-            
-            flag = False
+           
             # if its the very first move of the game, first player must throw out a tile while other players cant do anything
             if (game.player_turn == 0 and len(game.players_moved) == 0):
                 
@@ -1171,7 +1226,6 @@ async def s(ctx):
                         ))
                 
                 await asyncio.gather(*task)
-                flag = True
                 
             else:
                 
@@ -1206,7 +1260,7 @@ async def s(ctx):
                 player_info_list = await asyncio.gather(*tasks)
                 
                 # The player with the highest move piority will move in this round
-                piority = (None, 0)
+                piority = (None, 0, None)
                 for info in player_info_list:
                     if MOVE_PIORITY[info[1]] == 5:
                         piority = info
@@ -1215,36 +1269,212 @@ async def s(ctx):
                     if MOVE_PIORITY[info[1]] >= MOVE_PIORITY[piority[1]]:
                         piority = info
                 
-                # handle the different possible moves
-                # TODO
-                flag= True
-            
-            while True:
-                print("yes")
-                if not flag:
-                    asyncio.sleep(2)
-                else:
-                    break
-            
-            print("poiuytre")
+                # update current player turn
+                game.player_turn = piority[2]
 
+                await handle_normal(game, user, n, piority)
+
+            # there is a winner (hu)
+            if game.winning_hand is not None:
+                
+                # Show each player the winning hand and winning player
+                await display_hu(game)
+
+                go_next = await handle_go_next(game)
+                # Prompt each user whether they want to continue to new game or not
+            
+                if go_next:
+                    
+                    end_embed = discord.Embed(title="Game is resetting....")
+                    for user_id in game.player_ids:
+                        user = await bot.fetch_user(user_id)
+                        await user.send(embed=end_embed)
+
+                    game.game_reset()
+
+                # terminate the session
+                elif not go_next:
+                    
+                    end_embed = discord.Embed(title="The session has ended. Thanks for playing")
+                    for user_id in game.player_ids:
+                        user = await bot.fetch_user(user_id)
+                        await user.send(embed=end_embed)
+                    
+                    del active_games[game.channel]
+
+                break
+
+            # update prevailing wind
             if len(game.prevailing_track) == 4:
                         
                 game.prevailing_wind = (game.prevailing_wind + 1) % 4
                 game.prevailing_track = []
                 
-            # how to handle throwing out tiles / taking tiles / win
+            # add the previous players number to history
+            game.players_moved.append(game.player_turn)
+
             game.update_state()
+            
             # reset flags for next move
             game.flag_wall = False
             game.kong_flag = 0
             game.rob_flag = False
 
+        
+
+async def handle_go_next(game:Game):
+
+    next_list = [None, None, None, None]
+    messages = [None] * 4
+    views = [None] * 4
+    seconds = 30
+
+    def build_vote_embed():
+        embed = discord.Embed(
+            title="Start a New Game?",
+            description=f"**{seconds} seconds** remaining to vote.",
+            color=0x00ff00
+        )
+
+        for i, player_id in enumerate(game.player_ids):
+            vote = next_list[i]
+
+            if vote is True:
+                text = f"<@{player_id}> ✅ Yes"
+            elif vote is False:
+                text = f"<@{player_id}> ❌ No"
+            else:
+                text = f"<@{player_id}> waiting..."
+
+            embed.add_field(name=f"Player {i + 1}", value=text, inline=False)
+
+        return embed
+    
+    class VoteView(discord.ui.View):
+
+        def __init__(self, player_index):
+            super().__init__(timeout=None)
+            self.index = player_index
+
+        @discord.ui.button(label="Yes", style=discord.ButtonStyle.green)
+        async def yes_button(self, interaction: discord.Interaction, button):
+            next_list[self.index] = True
+            await interaction.response.defer()
+            await update_all_voting_messages()
+
+        @discord.ui.button(label="No", style=discord.ButtonStyle.red)
+        async def no_button(self, interaction: discord.Interaction, button):
+            next_list[self.index] = False
+            await interaction.response.defer()
+            await update_all_voting_messages()
+
+    async def update_all_voting_messages():
+        embed = build_vote_embed()
+
+        for i in range(4):
+            msg = messages[i]
+            if msg is None:
+                continue
+            
+            await msg.edit(embed=embed, view=views[i])   
+
+    # Send all players the initial DM
+    for i, player_id in enumerate(game.player_ids):
+        user = await bot.fetch_user(player_id)
+
+        views[i] = VoteView(i)
+        embed = build_vote_embed()
+
+        messages[i] = await user.send(embed=embed, view=views[i])
+
+    # Countdown loop
+    while seconds > 0:
+
+        # End early if all four players have voted
+        if all(v is not None for v in next_list):
+            break
+
+        await asyncio.sleep(1)
+        seconds -= 1
+
+        await update_all_voting_messages()
+
+    # Final update (disable buttons)
+    for view in views:
+        if view:
+            for child in view.children:
+                child.disabled = True
+
+    await update_all_voting_messages()
+
+    if next_list.count(True) == 4:
+        return True
+    
+    else:
+        return False
+        
+
+
+async def display_hu(game: Game):
+
+    """
+    Show each player the following information when a player was won
+    - Which player has won
+    - Winner's hand, flower/ seasons, winning type and faan
+
+    Prompt each user on whether they want to restart the game or not
+    """
+
+    # GUI 
+    win_embed = discord.Embed(title=f"Player {game.player_turn + 1} has won", color=0x00ff00)
+
+    win_string = ""
+    fs_string = ""
+
+    for meld in game.winning_hand[0]:
+        if meld[1] == "碰":
+            for z in range(3):
+                win_string += f"{meld[0][0]} "
+        
+        elif meld[1][-1] == "杠":
+            for z in range(4):
+                win_string += f"{meld[0][0]} "
+        
+        elif meld[1] == "吃":
+            for t in meld[0]:
+                win_string += f"{t[0]} "
+
+        elif meld[1] == "眼":
+            for z in range(2):
+                win_string += f"{meld[0][0]} "
+
+    for fs in game.players[game.player_turn].player_flowers_seasons:
+        fs_string += f"{fs[0]} "
+
+    win_embed.add_field(name="Winning Hand", value=f"{win_string}\n {fs_string}", inline=False)
+    win_embed.add_field(name=f"Winning type", value=f"{game.winning_hand[1]} with {game.winning_hand[2]} faan", inline=False)
+    
+    # send the winning hand to each user
+    for player_id in game.player_ids:
+
+        u = await bot.fetch_user(player_id)
+        await u.send(embed=win_embed)
+
 
 async def handle_normal(game:Game, user, n, move):
 
     """
+    If self touch
+    - user draws a tile and then has the option to either throw, concealed kong or hu
 
+    If pong/ chow
+    - user takes the tile from discard and add to meld, throw a tile
+
+    If revealed kong
+    - user takes the tile from discard, draws a tile then throws it back
+
+    If hu
+    - end game
     """
 
     d = game.discard_pile[-1]
@@ -1256,59 +1486,68 @@ async def handle_normal(game:Game, user, n, move):
 
     # pong
     elif move[1] == "碰":
-
-        # TODO
-        for l in range(2):
-            game.players[n].player_hand.remove(d)
-        
-        if d[1] == 'winds' and MJSET["winds"][game.prevailing_wind] == d[0]:
-            game.players[n].melded.append((d, "碰", True))
-            
-        else:
-            game.players[n].melded.append((d, "碰", False))
-
-        game.discard_pile.pop()
-        await throw_tile(game, user, n)
+        await handle_pong(game, user, n, d)
 
     # revealed kong
     elif move[1] == "杠":
-        
-        if game.players[n].player_hand.count(d) == 3:
-            # Remove the kong tiles from player hand
-            for l in range(3):
-                game.players[n].player_hand.remove(d)
-            
-            if d[1] == 'winds' and MJSET["winds"][game.prevailing_wind] == d[0]:
-                game.players[n].melded.append((d, "明杠", True))
-            else:
-                game.players[n].melded.append((d, "明杠", False))
-
-        # forming exposed kong from exposed pong if player draws from hand
-        elif (d, "碰", True) in game.players[n].melded:
-
-            game.players[n].melded.remove((d, "碰", True))
-            game.players[n].melded.append((d, "明杠", True))
-            
-
-        elif (d, "碰", False) in game.players[n].melded:
-            
-            game.players[n].melded.remove((d, "碰", False))
-            game.players[n].melded.append((d, "明杠", False))
-
-        game.discard_pile.pop()
-        # replace tile
-        await draw_tiles(game, user, n)
-
-        # handle self touch
-        await handle_self_touch(game, user, n)
-        game.rob_flag = True
+        await handle_rkong(game, user, n ,d)
     
     # Chow
     elif move[1] == "吃":
-        
         await handle_chow(game, user, n, d)
+
+    elif move[1] == "胡":
+        pass
+
+
+async def handle_rkong(game, user, n ,d):
+
+    if game.players[n].player_hand.count(d) == 3:
+        # Remove the kong tiles from player hand
+        for l in range(3):
+            game.players[n].player_hand.remove(d)
+        
+        if d[1] == 'winds' and game.mjset["winds"][game.prevailing_wind] == d[0]:
+            game.players[n].melded.append((d, "明杠", True))
+        else:
+            game.players[n].melded.append((d, "明杠", False))
+
+    # forming exposed kong from exposed pong if player draws from hand
+    elif (d, "碰", True) in game.players[n].melded:
+
+        game.players[n].melded.remove((d, "碰", True))
+        game.players[n].melded.append((d, "明杠", True))
         
 
+    elif (d, "碰", False) in game.players[n].melded:
+        
+        game.players[n].melded.remove((d, "碰", False))
+        game.players[n].melded.append((d, "明杠", False))
+
+    game.discard_pile.pop()
+    # replace tile
+    await draw_tiles(game, user, n)
+
+    # handle self touch
+    await handle_self_touch(game, user, n)
+    game.rob_flag = True
+
+
+async def handle_pong(game, user, n, d):
+
+    for l in range(2):
+        game.players[n].player_hand.remove(d)
+    
+    if d[1] == 'winds' and game.mjset["winds"][game.prevailing_wind] == d[0]:
+        game.players[n].melded.append((d, "碰", True))
+        
+    else:
+        game.players[n].melded.append((d, "碰", False))
+
+    game.discard_pile.pop()
+    await throw_tile(game, user, n)
+    
+    
 async def handle_chow(game:Game, user, n, d):
 
     class s_view(discord.ui.View):
@@ -1383,11 +1622,9 @@ async def handle_self_touch(game:Game, user, n):
 
         move = await display_self_touch(game, user, n)
 
-        print("MLJHGFXDFF")
         # Throw a tile
         if move[1] == "打牌":
 
-            print("asdsasdadadadsa")
             await throw_tile(game, user, n)
             break
         
@@ -1399,19 +1636,9 @@ async def handle_self_touch(game:Game, user, n):
         # Hu (End Game)
         elif move[1] == "胡":
 
-            await hu_end(game, user, n)
             break
         
-        print("sdads2222")
-
-    print("wadawd")
     return
-
-
-async def hu_end(game:Game, user, n):
-
-    # TODO
-    pass
 
 
 async def concealed_kong(game:Game, user, n):
@@ -1429,7 +1656,7 @@ async def concealed_kong(game:Game, user, n):
 
             self.tile_to_kong = None
 
-            distinct = list(set(game.players[n].player_hand))
+            distinct = sorted(list(set(game.players[n].player_hand)))
 
             for d in distinct:
 
@@ -1476,7 +1703,7 @@ async def concealed_kong(game:Game, user, n):
     game.players[n].player_hand.sort(key=lambda x: (x[0][-1:], x[0]))
 
     # prevailing wind
-    if view.tile_to_kong[1] == 'winds' and MJSET["winds"][game.prevailing_wind] == view.tile_to_kong[0]:
+    if view.tile_to_kong[1] == 'winds' and game.mjset["winds"][game.prevailing_wind] == view.tile_to_kong[0]:
         game.players[n].melded.append((view.tile_to_kong, "暗杠", True))
     else:
         game.players[n].melded.append((view.tile_to_kong, "暗杠", False))
@@ -1509,6 +1736,13 @@ async def draw_tiles(game:Game, user, n):
 
         em = discord.Embed(title=f"{tile[0]} was drawn", color=0x00ff00)
         await user.send(embed=em)
+
+    hand_string = ""
+    for tile in game.players[n].player_hand:
+        hand_string += f"{tile[0]} " 
+
+    phand_embed = discord.Embed(title="Your updated Hand", description=hand_string, color=0x00ff00)
+    await user.send(embed=phand_embed)
 
 
 async def display_self_touch(game:Game, user, n):
@@ -1578,7 +1812,7 @@ async def display_self_touch(game:Game, user, n):
     return t_view.result
 
 
-async def throw_tile(game:Game,user, n):
+async def throw_tile(game:Game, user, n):
 
     """
     Prompt the user to choose a tile from their hand
@@ -1727,7 +1961,7 @@ async def display_player_info(game:Game, user, n , hand_list, melded_list, fs_li
 
         # for each player, if move not available, disable the corresponding buttons
         else:
-            if item.custom_id not in move_table:
+            if int(item.custom_id) not in move_table[n]:
                 item.disabled = True  
 
     msg = await user.send(embed=player_embed, view=p_view)
@@ -1772,7 +2006,7 @@ async def display_game_info(game:Game, i, user, hand_list, melded_list, fs_list)
     """
         
     embed = discord.Embed(title="Current game state",
-                            description=f"Turn {len(game.players_moved)+1} \nPrevailing wind: {MJSET['winds'][game.prevailing_wind]} \nTiles: {len(game.tiles)}", 
+                            description=f"Turn {len(game.players_moved)+1} \nPrevailing wind: {game.mjset['winds'][game.prevailing_wind]} \nTiles: {len(game.tiles)}", 
                             color=0x00ff00)
                             
     p: Player = game.players[i]
@@ -1783,13 +2017,13 @@ async def display_game_info(game:Game, i, user, hand_list, melded_list, fs_list)
         hand_string = ""
         # if the player is the messaged player, show their tiles
         if i == j:
-            embed.add_field(name=f"{MJSET['winds'][j]} *{user.name}*", value=f'> Hand: {hand_list[j]}\n> Melded: {melded_list[j]}\n> Flowers: {fs_list[j]}',inline=False)
+            embed.add_field(name=f"{game.mjset['winds'][j]} *{user.name}*", value=f'> Hand: {hand_list[j]}\n> Melded: {melded_list[j]}\n> Flowers: {fs_list[j]}',inline=False)
 
         else:
             for n in range(len(p.player_hand)):
                 hand_string += "█ "
 
-            embed.add_field(name=f"{MJSET['winds'][j]} {user.name}", value=f'> Hand: {hand_string}\n> Melded: {melded_list[j]}\n> Flowers: {fs_list[j]}',inline=False)
+            embed.add_field(name=f"{game.mjset['winds'][j]} {user.name}", value=f'> Hand: {hand_string}\n> Melded: {melded_list[j]}\n> Flowers: {fs_list[j]}',inline=False)
         
     # game info
     msg = await user.send(embed=embed)
@@ -1854,7 +2088,7 @@ def game_info(game:Game):
         fs_string = ""
         p:Player = game.players[n]
         for f in p.player_flowers_seasons:
-            fs_string += f[0]
+            fs_string += f"{f[0]} "
 
         fs_list.append(fs_string)
         
@@ -1866,5 +2100,6 @@ def game_info(game:Game):
         hand_list.append(hand_string)
         
     return hand_list, melded_list, fs_list
+
 
 bot.run(token, log_handler=handler, log_level=logging.DEBUG)

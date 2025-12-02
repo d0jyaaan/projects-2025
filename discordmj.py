@@ -183,7 +183,7 @@ class Game():
                     "seasons": ["春","夏","秋","冬"]}
     
 
-    def game_reset(self):
+    def game_reset(self, b):
 
         """
         Reset the entire game after a player has won / no player has won when wall runs out of tiles
@@ -191,20 +191,21 @@ class Game():
 
         self.player_turn = 0
         self.flag_wall = False
-
-        c = copy.deepcopy(self.players)
+        
+        # reassign the players in the order of winner to player before the winner
+        # [0, 1, 2, 3] to [2, 3, 0, 1]
         
         new_player_list = []
-        for i in range(4):
-            new_player_list.append()
+        for i in range(len(self.players)):
 
-        # TODO
-        # reassign the players in the order of winner to player before the winner
-        # only allow chow for the player that is after the player that discarded the tile
+            if b:
+                p = Player(i, self.players[(self.player_turn + i) % 4].player_id)
+            else:
+                p = Player(i, self.players[i].player_id)
+            
+            new_player_list.append(p)
 
-        self.players = None
-
-
+        self.players = new_player_list
 
         self.tiles = []
         self.discard_pile = []
@@ -720,8 +721,11 @@ class Game():
                         self.move_table[index].append(2)
                     if self.check_kong(index, d):
                         self.move_table[index].append(3)
+
                     if self.check_chow(index, d) is not None:
-                        self.move_table[index].append(4)
+                        # only allow chow for the player that is after the player that discarded the tile
+                        if (index == 0 and self.players_moved[-1] == 3) or (index == (self.players_moved[-1] + 1)):
+                            self.move_table[index].append(4)
 
                     self.players[index].player_hand.append(d)
                     if self.check_hu(index):
@@ -927,7 +931,7 @@ async def run(ctx):
     # if there is no active game in the channel, make a new one
     active_games[ctx.channel.id] = Game(ctx.channel.id)
     game: Game = active_games[ctx.channel.id]
-    seconds = 10
+    seconds = 30
 
     def update_player_embed():
         
@@ -1021,9 +1025,9 @@ async def run(ctx):
             del active_games[ctx.channel.id]
             await ctx.send(f"Number of players: {4- game.player_ids.count(None)} / 4 \nNot enough players to start game. Try again.")
             await msg.delete()
+
     else:
-        # TODO
-        # await run_game(ctx, game)
+        await run_game(ctx)
         await msg.delete()
 
 
@@ -1146,8 +1150,21 @@ async def quit(ctx):
 
 
 @bot.command()
+async def h(ctx):
+
+    """
+    Send into the channel a list of the available commands
+    """
+    em = discord.Embed(title="Commands for MjCord", color=0x00ff00)
+    em.add_field(name="!run - Start the mahjong game", value="", inline=False)
+    em.add_field(name="!quit - Quit the mahjong game", value="", inline=False)
+
+    await ctx.send(embed=em)
+
+
+# @bot.command()
 # run game
-async def s(ctx):
+async def run_game(ctx):
 
     # TODO CHOW ALLOW PREVIOUS PLAYER DISCARDED TILE ONLY
     """
@@ -1155,10 +1172,11 @@ async def s(ctx):
     """
 
     game = Game(ctx.channel.id)
-    game.players = [Player(0, 512192531220398090), Player(1, 512192531220398090),Player(2, 512192531220398090),Player(3, 512192531220398090)]
     
-    # # loading bar
-    # loading_bar(ctx)
+    # game.players = [Player(0, 512192531220398090), Player(1, 512192531220398090),Player(2, 512192531220398090),Player(3, 512192531220398090)]
+    
+    # loading bar
+    loading_bar(ctx)
 
     while True:
 
@@ -1166,24 +1184,33 @@ async def s(ctx):
         #     ("9筒", "suits")
         # ]
 
-        game.players[0].player_hand = [
-            ("1筒", "suits"), ("1筒", "suits"), ("1筒", "suits"), 
-            ("2筒", "suits"), ("2筒", "suits"), ("2筒", "suits"), 
-            ("3筒", "suits"), ("3筒", "suits"), ("3筒", "suits"), 
-            ("6筒", "suits"), ("6筒", "suits"), ("9筒", "suits"),
-            ("9筒", "suits"),  ("9筒", "suits") 
-            ]   
-        
+        # game.players[0].player_hand = [
+        #     ("1筒", "suits"), ("1筒", "suits"), ("1筒", "suits"), 
+        #     ("2筒", "suits"), ("2筒", "suits"), ("2筒", "suits"), 
+        #     ("3筒", "suits"), ("3筒", "suits"), ("3筒", "suits"), 
+        #     ("6筒", "suits"), ("6筒", "suits"), ("9筒", "suits"),
+        #     ("9筒", "suits"),  ("9筒", "suits") 
+        #     ]   
+
+        # temporary
+        # game.player_ids = [512192531220398090, 512192531220398090, 512192531220398090, 512192531220398090]
+
         # initialise the game
         game.initialise()
 
-        # temporary
-        game.player_ids = [512192531220398090, 512192531220398090, 512192531220398090, 512192531220398090]
-        
-        go_next = None
-
         while True:
             
+            # if the wall runs out of tiles, end the game
+            if len(game.tiles) == 0:
+                
+                em = discord.Embed(title="Draw", description="The wall has run out of tiles")
+                for id in game.player_ids:
+                    user = bot.fetch_user(id)
+                    user.send(embed=em)
+                
+                await handle_go_next(game, False)
+                break
+
             # send each player the current game state and the discard pile (constant and wont change even if got user input)
             discard_string = discard_pile(game)
             
@@ -1279,28 +1306,8 @@ async def s(ctx):
                 
                 # Show each player the winning hand and winning player
                 await display_hu(game)
-
-                go_next = await handle_go_next(game)
-                # Prompt each user whether they want to continue to new game or not
-            
-                if go_next:
-                    
-                    end_embed = discord.Embed(title="Game is resetting....")
-                    for user_id in game.player_ids:
-                        user = await bot.fetch_user(user_id)
-                        await user.send(embed=end_embed)
-
-                    game.game_reset()
-
-                # terminate the session
-                elif not go_next:
-                    
-                    end_embed = discord.Embed(title="The session has ended. Thanks for playing")
-                    for user_id in game.player_ids:
-                        user = await bot.fetch_user(user_id)
-                        await user.send(embed=end_embed)
-                    
-                    del active_games[game.channel]
+                # players vote to go next game or choose to end session
+                await handle_go_next(game, True)
 
                 break
 
@@ -1320,13 +1327,37 @@ async def s(ctx):
             game.kong_flag = 0
             game.rob_flag = False
 
-        
 
-async def handle_go_next(game:Game):
+async def handle_go_next(game:Game, b):
+        
+    go_next = await vote_go_next(game)
+    # Prompt each user whether they want to continue to new game or not
+
+    if go_next:
+        
+        end_embed = discord.Embed(title="Game is resetting....")
+        for user_id in game.player_ids:
+            user = await bot.fetch_user(user_id)
+            await user.send(embed=end_embed)
+
+        game.game_reset(b)
+
+    # terminate the session
+    elif not go_next:
+        
+        end_embed = discord.Embed(title="The session has ended. Thanks for playing")
+        for user_id in game.player_ids:
+            user = await bot.fetch_user(user_id)
+            await user.send(embed=end_embed)
+        
+        del active_games[game.channel]
+
+
+async def vote_go_next(game:Game):
 
     next_list = [None, None, None, None]
-    messages = [None] * 4
-    views = [None] * 4
+    messages = [None, None, None, None]
+    views = [None, None, None, None]
     seconds = 30
 
     def build_vote_embed():
@@ -1413,7 +1444,6 @@ async def handle_go_next(game:Game):
     else:
         return False
         
-
 
 async def display_hu(game: Game):
 

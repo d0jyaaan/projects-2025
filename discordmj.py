@@ -7,6 +7,7 @@ import logging
 from dotenv import load_dotenv
 import os
 
+from datetime import date
 import copy
 import random
 import asyncio
@@ -24,10 +25,11 @@ client = discord.Client(intents=intents)
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# Version 1.0
+
 @bot.event
 async def on_ready():
     print("Running")
-
 
 
 TILES_UNICODE = {
@@ -82,8 +84,10 @@ MOVE_PIORITY = {
 
 BOLD_START = '\033[1m'
 BOLD_END = '\033[0m'
-active_games = {}
 
+active_games = {}
+queueing = []
+players = []
 
 class Player():
 
@@ -181,7 +185,8 @@ class Game():
                     "dragons" : ["中", "發", "白"],
                     "flowers": ["梅","蘭","竹","菊"],
                     "seasons": ["春","夏","秋","冬"]}
-    
+
+
 
     def game_reset(self, b):
 
@@ -922,6 +927,68 @@ class Game():
 
 
 @bot.command()
+async def queue(ctx):
+    user = ctx.author
+
+    # Prevent duplicate joins
+    if user in queueing:
+        await ctx.send(f"{user.mention}, you are already in the queue!")
+        return
+
+    queueing.append(user)
+    seconds = 0
+
+    # Define leave button
+    class LeaveQueueView(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=None)
+
+        @discord.ui.button(label="Leave Queue", style=discord.ButtonStyle.red)
+        async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if user in queueing:
+                queueing.remove(user)
+                await interaction.response.send_message(f"{user.mention} left the queue.", ephemeral=True)
+            self.stop()
+
+    view = LeaveQueueView()
+
+    # Function to create/update embed
+    def update_embed():
+        embed = discord.Embed(
+            title=f"{user.mention} joined the queue!",
+            description=f"*Queueing for {seconds} seconds*",
+            color=0x00ff00
+        )
+        return embed
+
+    # Send initial embed
+    queue_message = await ctx.send(embed=update_embed(), view=view)
+
+    # Timer loop
+    while user in queueing:
+
+        await asyncio.sleep(1)
+        seconds += 1
+
+        # Update embed
+        await queue_message.edit(embed=update_embed(), view=view)
+
+        # Check if enough players to start game
+        if len(queueing) >= 4:
+
+            mentions = ", ".join([u.mention for u in queueing[:4]])
+
+            start_em = discord.Embed(title=f"Matched found!",
+                                     description=f"Game starting with: {mentions}",
+                                     color=0x00ff00)
+            
+            await ctx.send(embed=start_em)
+            # remove these players from queue
+            queueing[:4] = []
+            break
+
+
+@bot.command()
 async def run(ctx):
 
     if ctx.channel.id in active_games.keys():
@@ -997,6 +1064,7 @@ async def run(ctx):
         @discord.ui.button(label="Start", style=discord.ButtonStyle.green, row=2)
         async def start_game(self, interaction, button):
             # Means there is 4 players and game can start
+            # TODO for now == 3 for debug but should be == 0
             if game.player_ids.count(None) == 3:
                 game.start_flag = True
 
@@ -1038,115 +1106,134 @@ async def quit(ctx):
     Terminate the mahjong game in the channel that this command was sent in.
     Only allow the active players to end the game (Prevent trolling)
     """
-    
+
     if ctx.channel.id not in active_games.keys():
         await ctx.send("There is no active game in this channel. To start a game type !run")
-        
+        return
+
+    game = active_games[ctx.channel.id]
+
+    # If literally no players joined
+    if game.player_ids.count(None) == 4:
+        await ctx.send("The mahjong game has been ended. Thanks for playing!")
+        del active_games[ctx.channel.id]
+        return
+
+    quit_list = [None, None, None, None]
+    seconds = 20
+
+    # Holder for DM message objects + views
+    dm_messages = [None, None, None, None]
+    dm_views = [None, None, None, None]
+
+    def build_quit_embed():
+        embed = discord.Embed(
+            title="End Game?",
+            description=f"*{seconds} sec left for voting*",
+            color=0x00ff00
+        )
+
+        for i in range(4):
+            pid = game.player_ids[i]
+            if pid is None:
+                continue
+
+            if quit_list[i] is True:
+                status = f"<@{pid}> ✅"
+            elif quit_list[i] is False:
+                status = f"<@{pid}> ❌"
+            else:
+                status = f"<@{pid}> waiting..."
+
+            embed.add_field(name=f"Player {i+1}", value=status, inline=False)
+
+        return embed
+
+    async def update_all():
+        embed = build_quit_embed()
+        for i in range(4):
+            if dm_messages[i] is not None:
+                await dm_messages[i].edit(embed=embed, view=dm_views[i])
+
+    class QuitView(discord.ui.View):
+
+        def __init__(self, index):
+            super().__init__(timeout=None)
+            self.index = index
+
+        @discord.ui.button(label="Yes", style=discord.ButtonStyle.green)
+        async def yes_button(self, interaction: discord.Interaction, button):
+            if interaction.user.id == game.player_ids[self.index]:
+                quit_list[self.index] = True
+                await interaction.response.defer()
+                await update_all()
+
+        @discord.ui.button(label="No", style=discord.ButtonStyle.red)
+        async def no_button(self, interaction: discord.Interaction, button):
+            if interaction.user.id == game.player_ids[self.index]:
+                quit_list[self.index] = False
+                await interaction.response.defer()
+                await update_all()
+
+    # Send DM to each player
+    for i in range(4):
+        pid = game.player_ids[i]
+        if pid is None:
+            continue
+
+        user = await bot.fetch_user(pid)
+
+        dm_views[i] = QuitView(i)
+        embed = build_quit_embed()
+
+        dm_messages[i] = await user.send(embed=embed, view=dm_views[i])
+
+    # Countdown timer
+    while seconds > 0:
+        await asyncio.sleep(1)
+        seconds -= 1
+        await update_all()
+
+        # Early termination if everyone voted Yes
+        if quit_list.count(True) == (4 - game.player_ids.count(None)):
+            break
+
+    # Disable all buttons
+    for v in dm_views:
+        if v:
+            for but in v.children:
+                but.disabled = True
+
+    await update_all()
+
+    # Count votes
+    yes_votes = quit_list.count(True)
+    needed = math.floor((4 - game.player_ids.count(None)) / 2) + 1
+
+    if yes_votes >= needed:
+        del active_games[ctx.channel.id]
+
+        # Send DM end message
+        end_embed = discord.Embed(
+            title="The game has ended. Thanks for playing!",
+            color=0x00ff00
+        )
+        for pid in game.player_ids:
+            if pid:
+                user = await bot.fetch_user(pid)
+                await user.send(embed=end_embed)
+
     else:
-
-        # if no player is registered in the game, end it
-        if active_games[ctx.channel.id].player_ids.count(None) == 4:
-            
-            await ctx.send("The mahjong game has been ended. Thanks for playing!")
-            del active_games[ctx.channel.id]
-
-        game = active_games[ctx.channel.id]
-        quit_list = [None, None, None, None]
-        # How long for timer to tick down
-        seconds = 20
-
-        def update_quit_embed():
-        
-            """
-            If a player pressed the yes button, add ✅
-            if no, add ❌
-            otherwise nothing
-            """
-            
-            embed = discord.Embed(
-                title="End Game?",
-                description=f"*{seconds} sec left for voting*",
-                color=0x00ff00
-            )
-
-            for i in range(4):
-                
-                player_id = game.player_ids[i]
-                if player_id is not None:
-
-                    if quit_list[i]:
-                        v = f"<@{player_id}> ✅"
-                    elif quit_list[i] is False:
-                        v = f"<@{player_id}> ❌"
-                    elif quit_list[i] is None:
-                        v = f"<@{player_id}>"
-
-                    embed.add_field(name=f"Player {i+1}", value=v, inline=False)
-
-            return embed
-        
-
-        class QuitView(discord.ui.View):
-
-            # Button for quiting the bot
-            # Allow players to vote to end the game. Majority Wins
-            @discord.ui.button(label="Yes")
-            async def player_yes(self, interaction: discord.Interaction, button):
-                
-                if interaction.user.id in game.player_ids:
-                    
-                    index = game.player_ids.index(interaction.user.id)
-                    quit_list[index] = True
-                    await msg.edit(embed=update_quit_embed(), view=view)
-
-                else:
-                    await ctx.send(f"<@{ctx.message.author.id}> You are not a player of the mahjong game!")
-
-                await interaction.response.defer(ephemeral=False)
-
-            @discord.ui.button(label="No")
-            async def player_no(self, interaction: discord.Interaction, button):
-                
-                if interaction.user.id in game.player_ids:
-                    
-                    index = game.player_ids.index(interaction.user.id)
-                    quit_list[index] = False
-                    await msg.edit(embed=update_quit_embed(), view=view)
-                
-                else:
-                    await ctx.send(f"<@{ctx.message.author.id}> You are not a player of the mahjong game!")
-
-                await interaction.response.defer(ephemeral=False)
-
-        embed = update_quit_embed()
-        view = QuitView()
-        msg = await ctx.send(embed=embed, view=view)
-        
-        # Give players 30 seconds to vote, if after 30 seconds and no decisive decision, game continues
-        while seconds > 0:
-            time.sleep(1)
-            seconds -= 1
-            await msg.edit(embed=update_quit_embed(), view=view)
-
-            if quit_list.count(True) == (4 - game.player_ids.count(None)):
-                
-                del active_games[ctx.channel.id]
-                await ctx.send("The game has ended. Thanks for playing!")
-                await msg.delete()
-                break
-                 
-        
-        n_true = quit_list.count(True)
-        if n_true > math.floor((4 - game.player_ids.count(None)) / 2):
-
-            del active_games[ctx.channel.id]
-            await ctx.send(f"Vote Results : {n_true} / {4 - game.player_ids.count(None)} \nThe game has ended. Thanks for playing!")
-            await msg.delete()
-
-        else:
-
-            await ctx.send(f"Vote Results : {n_true} / {4 - game.player_ids.count(None)}  \nThe game will continue.")
-            await msg.delete()
+        # Continue game
+        continue_embed = discord.Embed(
+            title=f"Vote Results: {yes_votes}/{4 - game.player_ids.count(None)} voted YES",
+            description="The game will continue.",
+            color=0xffd000
+        )
+        for pid in game.player_ids:
+            if pid:
+                user = await bot.fetch_user(pid)
+                await user.send(embed=continue_embed)
 
 
 @bot.command()
@@ -1166,17 +1253,19 @@ async def h(ctx):
 # run game
 async def run_game(ctx):
 
-    # TODO CHOW ALLOW PREVIOUS PLAYER DISCARDED TILE ONLY
     """
     Function that handles all of mahjong gameplay loop
     """
 
     game = Game(ctx.channel.id)
-    
-    # game.players = [Player(0, 512192531220398090), Player(1, 512192531220398090),Player(2, 512192531220398090),Player(3, 512192531220398090)]
+    active_games[ctx.channel.id] = game
+
+    # temporary
+    game.player_ids = [512192531220398090, 512192531220398090, 512192531220398090, 512192531220398090]
+    game.players = [Player(0, 512192531220398090), Player(1, 512192531220398090),Player(2, 512192531220398090),Player(3, 512192531220398090)]
     
     # loading bar
-    loading_bar(ctx)
+    await loading_bar(ctx)
 
     while True:
 
@@ -1192,14 +1281,18 @@ async def run_game(ctx):
         #     ("9筒", "suits"),  ("9筒", "suits") 
         #     ]   
 
-        # temporary
-        # game.player_ids = [512192531220398090, 512192531220398090, 512192531220398090, 512192531220398090]
-
+        if game.channel not in active_games.keys():
+            return
+        
         # initialise the game
         game.initialise()
 
         while True:
             
+            # check whether game is still existing if not break the loop
+            if game.channel not in active_games.keys():
+               return
+
             # if the wall runs out of tiles, end the game
             if len(game.tiles) == 0:
                 
@@ -2058,6 +2151,21 @@ async def display_game_info(game:Game, i, user, hand_list, melded_list, fs_list)
     # game info
     msg = await user.send(embed=embed)
     return msg
+
+
+def generate_id():
+
+    """
+    Generate ID for games that do not take place in a channel
+    """
+
+    while True:
+
+        random_int = str(random.randint(1, 9999))
+        id = date.today().strftime("%Y%m%d") + random_int
+
+        if id not in active_games.keys():
+            return id
 
 
 def discard_pile(game:Game):

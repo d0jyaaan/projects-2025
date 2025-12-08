@@ -928,13 +928,18 @@ class Game():
 
 @bot.command()
 async def queue(ctx):
-    user = ctx.author
+
+    user = ctx.author.id
 
     # Prevent duplicate joins
     if user in queueing:
-        await ctx.send(f"{user.mention}, you are already in the queue!")
+        await ctx.send(f"<@{user}>, you are already in the queue!")
         return
 
+    if user in players:
+        await ctx.send(f"<@{user}>, you are already in an active game!")
+        return
+    
     queueing.append(user)
     seconds = 0
 
@@ -947,7 +952,7 @@ async def queue(ctx):
         async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
             if user in queueing:
                 queueing.remove(user)
-                await interaction.response.send_message(f"{user.mention} left the queue.", ephemeral=True)
+                await interaction.response.send_message(f"<@{user}> left the queue.", ephemeral=False)
             self.stop()
 
     view = LeaveQueueView()
@@ -955,7 +960,7 @@ async def queue(ctx):
     # Function to create/update embed
     def update_embed():
         embed = discord.Embed(
-            title=f"{user.mention} joined the queue!",
+            title=f"<@{user}> joined the queue!",
             description=f"*Queueing for {seconds} seconds*",
             color=0x00ff00
         )
@@ -976,10 +981,13 @@ async def queue(ctx):
         # Check if enough players to start game
         if len(queueing) >= 4:
 
-            mentions = ", ".join([u.mention for u in queueing[:4]])
+            mentions = ""
+
+            for u in queueing[:1]:
+                mentions += f"<@{u}>\n"
 
             start_em = discord.Embed(title=f"Matched found!",
-                                     description=f"Game starting with: {mentions}",
+                                     description=f"Game starting with: \n{mentions}",
                                      color=0x00ff00)
             
             await ctx.send(embed=start_em)
@@ -987,6 +995,7 @@ async def queue(ctx):
             queueing[:4] = []
             break
 
+    
 
 @bot.command()
 async def run(ctx):

@@ -1,32 +1,13 @@
 import random
-import pprint
 import copy
-import math
 
 BOLD = '\033[1m'
 END = '\033[0m'
 
 def main(): 
 
-    # {"suits" : ["筒", "索", "萬"],
-    #        "winds" : ["東", "南", "西", "北"],
-    #        "dragons" : ["中", "發", "白"],
-    #        "flowers": ["梅","蘭","竹","菊"],
-    #        "seasons": ["春","夏","秋","冬"]}
-
     game = Game()
-
-    game.players[0].player_hand = [("1筒", "suits"), ("1筒", "suits"),("1筒", "suits"),
-                                   ("白", "dragons"),("白", "dragons"), ("白", "dragons"),
-                                   ("發", "dragons"),("發", "dragons"), ("發", "dragons"),
-                                   ("北", "winds"), ("北", "winds"), ("北", "winds"),
-                                   ("中", "dragons"),("中", "dragons")]
-    game.players[0].melded = []
-    
-    w = game.check_winning_type(0)
-    for s in w:
-        print(s)
-    # game.run()
+    game.run()
     
 
 class Player():
@@ -69,65 +50,73 @@ class Game():
     """
     Class handling all of the game's logic 
     """
-    # player turn
-    player_turn = 0
 
-    # flag for touch from wall
-    flag_wall = False
+    def __init__(self):
+        
+        # player turn
+        self.player_turn = 0
 
-    # number of players 
-    player_count = 4
+        # flag for touch from wall
+        self.flag_wall = False
 
-    # generate list containing n(player_count) of Player() object
-    players = [Player(i) for i in range(player_count)]
+        # number of players 
+        self.player_count = 4
 
-    # mahjong sets 
-    mjset = {"suits" : ["筒", "索", "萬"],
-           "winds" : ["東", "南", "西", "北"],
-           "dragons" : ["中", "發", "白"],
-           "flowers": ["梅","蘭","竹","菊"],
-           "seasons": ["春","夏","秋","冬"]}
-    
-    # all the available tiles still on the board
-    # each tile is a pair : (tile, type)
-    tiles = []
-    
-    # discard pile
-    discard_pile = []
+        # generate list containing n(player_count) of Player() object
+        self.players = [Player(i) for i in range(self.player_count)]
 
-    # evaluation table
-    move_table = [[], [], [], []]
+        # mahjong sets 
+        self.mjset = {"suits" : ["筒", "索", "萬"],
+            "winds" : ["東", "南", "西", "北"],
+            "dragons" : ["中", "發", "白"],
+            "flowers": ["梅","蘭","竹","菊"],
+            "seasons": ["春","夏","秋","冬"]}
+        
+        # all the available tiles still on the board
+        # each tile is a pair : (tile, type)
+        self.tiles = []
+        
+        # discard pile
+        self.discard_pile = []
 
-    # tile_table
-    tile_table = []
+        # evaluation table
+        self.move_table = [[], [], [], []]
 
-    prevailing_wind = 0
-    players_moved = []
-    
-    w_hand = []
-    w_special = None
-    prevailing_track = []
+        # tile_table
+        self.tile_table = []
 
-    hand_values = {
-        "混一色" : 3,
-        "清一色" : 7,
-        "小三元" : 5,
-        "大三元" : 8,
-        "小四喜" : 6,
-        "大四喜" : 13,
-        "字一色" : 10,
-        "花糊" : 3,
-        "八仙過海" : 8,
-        "十三幺" : 13,
-        "九子連環" : 13,
-        "天糊" : 13,
-        "地糊" : 13,
-        "人糊" : 13,
-        "七對子" : 3,
-        "碰碰糊" : 3,
-        "坎坎胡" : 8,
-        "十八羅漢": 13
-    }
+        self.prevailing_wind = 0
+        self.players_moved = []
+        
+        self.prevailing_track = []
+        
+        # winning
+        self.winning_hand = None
+        self.kong_flag = 0
+        self.rob_flag = False
+
+        self.hand_values = {
+            "混一色" : 3,
+            "清一色" : 7,
+            "小三元" : 5,
+            "大三元" : 8,
+            "小四喜" : 6,
+            "大四喜" : 13,
+            "字一色" : 10,
+            "花糊" : 3,
+            "八仙過海" : 8,
+            "十三幺" : 13,
+            "九子連環" : 13,
+            "天糊" : 13,
+            "地糊" : 13,
+            "人糊" : 13,
+            "七對子" : 3,
+            "碰碰糊" : 3,
+            "坎坎胡" : 8,
+            "十八羅漢": 13,
+            "清老頭" : 13,
+            "混老头" : 4
+        }
 
     def run(self):
 
@@ -142,93 +131,178 @@ class Game():
             - check for flowers and seasons
             - add the bonus points for each player until each player has no flowers left
         """
-        self.initialise()
-        
-        # main loop for game
+
+        # Outermost loop 
         while True:
             
-            self.print_display_h()
+            # initialise the game 
+            self.initialise()
             
-            # if first round and first player(house) must throw away a tile
-            if not(self.player_turn == 0 and len(self.players_moved) == 0):
+            # For each iteration of the game
+            while True:
+                
+                # if run out of tiles, game resets and follow the same order
+                if len(self.tiles) == 0:
+                    print(chr(27) + "[2J")
+                    print("No winner!")
+                    break
 
-                # TODO since this app is 1 player vs 3 computer, the parameter for self.get_input will just be the human player's number
-                self.evaluate_moves()
+                self.print_display_h()
+                
+                # if first round and first player(house) must throw away a tile
+                if not(self.player_turn == 0 and len(self.players_moved) == 0):
 
-                # select which player wants to move
-                p = self.player_turn
-                while True:
-                    
-                    try:
+                    # TODO since this app is 1 player vs 3 computer, the parameter for self.get_input will just be the human player's number
+                    self.evaluate_moves()
+
+                    # select which player wants to move
+                    p = self.player_turn
+                    while True:
                         
-                        p = int(input("Which player wants to move? (1-4) \n")) - 1
-                        
-                        # cant select from previous player
-                        if not(p == self.players_moved[-1]):
-                            # if its not the intended player's turn and the player that cuts in has valid moves
+                        try: 
+                            p = int(input("Which player wants to move? (1-4) \n")) - 1
+                            
+                            # cant select from previous player
+                            if not(p == self.players_moved[-1]):
+                                # if its not the intended player's turn and the player that cuts in has valid moves
 
-                            self.print_display_h()
-                            if (p >=0 and p <= 3):
+                                self.print_display_h()
+                                if (p >=0 and p <= 3):
 
-                                if not(p == self.player_turn) and (len(self.move_table[p]) >= 1):
+                                    if not(p == self.player_turn) and (len(self.move_table[p]) >= 1):
 
-                                    print(f"Player {p + 1}'s turn \n" )
-                                    if self.get_input(p):
-                                        if not(p == self.player_turn):
-                                            self.player_turn == p
-                                        break
-
-                                    else:
-                                        self.print_display_h()
-                                        print("Invalid move!")  
-
-                                elif (p >=0 and p <= 3):
-                                    
-                                    if not(p == self.player_turn):
-                                        self.print_display_h()
-                                        print("No valid moves!")  
-                                    else:
                                         print(f"Player {p + 1}'s turn \n" )
                                         if self.get_input(p):
-                                            pass
+                                            if not(p == self.player_turn):
+                                                self.player_turn == p
+                                            break
 
+                                        else:
+                                            self.print_display_h()
+                                            print("Invalid move!")  
+
+                                    elif (p >=0 and p <= 3):
+                                        
+                                        if not(p == self.player_turn):
+                                            self.print_display_h()
+                                            print("No valid moves!")  
+                                        else:
+                                            print(f"Player {p + 1}'s turn \n" )
+                                            if self.get_input(p):
+                                                break
+
+                                else:
+                                    print("Invalid Player Number (1-4)")
                             else:
-                                print("Invalid Player Number (1-4)")
-                        else:
-                            print(f"Player {p+1} cannot move this round!")
+                                print(f"Player {p+1} cannot move this round!")
+                        
+                        except ValueError and TypeError:
+                            pass
+
+                else:
+                    # player 1 can choose whether they want to concealed kong or not
+                    # if u dont concealed kong, then dont count it as a kong even if player can win since could be pong + chow
+                    # otherwise player 1 can throw away a tile
+                    self.get_input_self_touch(self.player_turn, [])
+        
+                # keep track of which player has moved for this round of wind
+                # if all 4 players have moved, change to the next wind
+                self.players_moved.append(self.player_turn)
+
+                # If a player has won, display the faan value, player hand and winning type, break from this loop
+                if self.winning_hand is not None:
+
+                    # There are a few ways to gain more faan when winning
+                    faan = self.winning_hand[2]
+                    # Self Draw (自摸)
+                    if self.flag_wall:
+                        faan += 1
                     
-                    except ValueError and TypeError:
-    
-                        pass
+                    # Concealed Hand (門前清)
+                    if len(self.players[self.player_turn].player_hand) == 14:
+                        faan += 1
+
+                    # Win on Final Tile (海底撈月)
+                    if len(self.tiles) == 0:
+                        faan += 1
+                    
+                    # After a Kong (槓上自摸)
+                    if self.rob_flag:
+                        faan += 1
+
+                    # After Multiple Kongs (槓上槓自摸)
+                    elif self.kong_flag > 1:
+                        faan += 8
+
+                    print(chr(27) + "[2J")
+
+                    print(f"{BOLD}Player {self.player_turn + 1} Won with {min(faan + self.calc_fs_faan(self.player_turn), 13)} Faan{END}")
+
+                    print("Winning hand |: ", end="")
+                    for meld in self.winning_hand[0]:
+                        if meld[1] == "碰":
+                            for z in range(3):
+                                print(f"{meld[0][0]} ", end="")
+                        
+                        elif meld[1][-1] == "杠":
+                            for z in range(4):
+                                print(f"{meld[0][0]} ", end="")
+                        
+                        elif meld[1] == "吃":
+                            for t in meld[0]:
+                                print(f"{t[0]} ", end="")
+
+                        elif meld[1] == "眼":
+                            for z in range(2):
+                                print(f"{meld[0][0]} ", end="")
+
+                    print("")
+                    print(f"Winning type |: {self.winning_hand[1]}")
+                    break
+
+                # calculate the faan of the player that just moved
+                self.players[self.player_turn].player_faan = self.players[self.player_turn].fs_faan + self.calc_hand_faan(self.players[self.player_turn].melded, self.player_turn)[0]
+
+                if len(self.prevailing_track) == 4:
+                    
+                    self.prevailing_wind = (self.prevailing_wind + 1) % 4
+                    self.prevailing_track = []
+                    
+                # how to handle throwing out tiles / taking tiles / win
+                self.update_state()
+                # reset flags for next move
+                self.flag_wall = False
+                self.kong_flag = 0
+                self.rob_flag = False
+            
+            # If someone has won, reprompt the users whether want to play a new round
+            # reset everything but change the prevailing wind 
+            reset_flag = False
+            while True:
+                
+                try:
+                    print("Would you like to restart the game? (y/n)")
+                    u_input = input("")
+
+                    if u_input == "y":
+                        reset_flag = True
+                        break
+
+                    elif u_input == "n":
+                        reset_flag = False
+                        break
+
+                except (ValueError, TypeError):
+                    pass
+
+            if not reset_flag:
+                print("Thanks for playing!")
+                break 
 
             else:
-                # player 1 can choose whether they want to concealed kong or not
-                # if u dont concealed kong, then dont count it as a kong even if player can win since could be pong + chow
-                # otherwise player 1 can throw away a tile
-                self.get_input_self_touch(self.player_turn, [])
-                
-            # keep track of which player has moved for this round of wind
-            # if all 4 players have moved, change to the next wind
-            self.players_moved.append(self.player_turn)
+                self.game_reset()
+            # If run out of tiles, reset everything
 
-            # calculate the faan of the player that just moved
-            self.players[self.player_turn].player_faan = self.players[self.player_turn].fs_faan + self.calc_hand_faan(self.player_turn)[0]
-
-            if len(self.prevailing_track) == 4:
-                
-                self.prevailing_wind = (self.prevailing_wind + 1) % 4
-                self.prevailing_track = []
-                
-            # how to handle throwing out tiles / taking tiles / win
-            self.update_state()
-            
-            # if run out of tiles, game resets and follow the same order
-            if len(self.tiles) == 0:
-                # TODO
-                # when player ends their move, update their personal eval table
-                pass
-            
-            break
 
     # <Start> Evaluation functions </Start>
     def win_state(self, hand, melded, winning_hands):
@@ -316,22 +390,32 @@ class Game():
     def evaluate_moves(self):
 
         """
-        For each game state, evaluate each player's hand and add the legal actions (碰, 杠, 吃, 胡) into a list
+        For each game state, evaluate each player's hand and add the legal actions (碰, 杠, 吃) into a list
         """
 
         self.move_table = [[], [], [], []]
 
         if not (len(self.discard_pile) == 0):
+
             d = self.discard_pile[-1]
             for index in range(0, 4):
-                if self.check_pong(index, d):
-                    self.move_table[index].append(2)
-                if self.check_kong(index, d):
-                    self.move_table[index].append(3)
-                if self.check_chow(index, d) is not None:
-                    self.move_table[index].append(4)
-                if self.check_hu(index):
-                    self.move_table[index].append(5)
+                # the player that just moved can't move again and can only pass
+                if not(index == self.players_moved[-1]):
+                    if self.check_pong(index, d):
+                        self.move_table[index].append(2)
+                    if self.check_kong(index, d):
+                        self.move_table[index].append(3)
+
+                    if self.check_chow(index, d) is not None:
+                        # only allow chow for the player that is after the player that discarded the tile
+                        if (index == 0 and self.players_moved[-1] == 3) or (index == (self.players_moved[-1] + 1)):
+                            self.move_table[index].append(4)
+
+                    self.players[index].player_hand.append(d)
+                    if self.check_hu(index):
+                        self.move_table[index].append(5)
+                    self.players[index].player_hand.remove(d)   
+
             
 
     def calc_hand_faan(self, melded, n):
@@ -586,11 +670,12 @@ class Game():
         Ensure player has enough faan to win
         Calculate the faan of the player's hand according to winning type
         """
-
+        
         # function returns whether there is a winning hand or not
-        b = self.check_winning_type(n)
-        if b:
-            pass
+        winning_type = self.check_winning_type(n)
+        if winning_type is not None:
+            self.winning_hand = winning_type
+            return True
 
         return False
 
@@ -610,12 +695,12 @@ class Game():
 
         # 7 Flowers (花糊)
         if len(self.players[n].player_flowers_seasons) == 7:
-            return (None,"花糊", self.hand_values["花糊"])
+            return (None,"花糊", min(self.hand_values["花糊"] + self.calc_hand_faan(self.players[n].melded, n, 13)))
         
         # 8 Flowers (八仙過海)
         elif len(self.players[n].player_flowers_seasons) == 8:
-
-            return (None,"八仙過海", self.hand_values["八仙過海"])    
+            return (None,"八仙過海", min(self.hand_values["八仙過海"] + self.calc_hand_faan(self.players[n].melded, n, 13)))   
+        
         distinct = list(set(self.players[n].player_hand))
 
         winning_hand = []
@@ -629,8 +714,7 @@ class Game():
 
                 temp_hand.remove(d)
                 temp_hand.remove(d)
-                
-
+            
                 # use a recursive algorithm on the player's temporary hand
                 w = self.win_state(temp_hand, temp_melded, [])
                 
@@ -640,117 +724,130 @@ class Game():
                             melded.append((d, "眼"))
                             winning_hand.append(melded)
 
+        # print(self.players[n].player_hand)
+        # print(self.players[n].melded)
+        # print(winning_hand)
         # if theres no winning hand from checking the hand and meld for pongs / chow
         # note that the following hands require the player's hand to be fully concealed
         # so player's hand must have 14 tiles
-        if len(winning_hand) == 0 and len(self.players[n].player_hand) == 14:
+        if len(winning_hand) == 0:
             
-            # Seven Pairs (七對子) - ignore 4 of the same tiles
-            # hand contains 7 pairs
-            pairs = 0
-            for d in distinct:
-                if self.players[n].player_hand.count(d) == 2:
-                    pairs += 1
-            
-            if pairs == 7:
-                # return the 7 distinct type of tiles
-                return (distinct ,"七對子", self.hand_values["七對子"])
-            
-            # Nine Gates (九子連環)
-            # eg: 1112345678999 + any of the 9 same suited tile
-            self.players[n].player_hand.sort()
-            temp_hand = copy.deepcopy(self.players[n].player_hand)
+            if len(self.players[n].player_hand) == 14:
+                # Seven Pairs (七對子) - ignore 4 of the same tiles
+                # hand contains 7 pairs
+                pairs = 0
+                n_terminals = 0
+                for d in distinct:
+                    if self.players[n].player_hand.count(d) == 2:
+                        pairs += 1
+                    
+                    if self.players[n].player_hand.count(d) == 4:
+                        pairs += 2
 
-            for suit in self.mjset["suits"]:
-
-                if (f'1{suit}', 'suits') in temp_hand and (f'9{suit}', 'suits') in temp_hand:
-
-                    if (temp_hand.count((f'1{suit}', 'suits')) == 3 or temp_hand.count((f'1{suit}', 'suits')) == 4) and (temp_hand.count(f'9{suit}', 'suits') == 3 or temp_hand.count(f'9{suit}', 'suits') == 4):
-                        
-                        # since 1s and 9s must be in the hand already, only count 2 to 8 (7 tiles)
-                        count = 0
-                        for i in range(1, 10):
-                            
-                            # if theres 4 of the first suit, remove
-                            if i == 1 and temp_hand.count((f'1{suit}', 'suits')) == 4:
-                                temp_hand.remove((f'1{suit}', 'suits'))
-
-                            # if theres 4 of the ninth suit, remove
-                            if i == 9 and temp_hand.count((f'9{suit}', 'suits')) == 4:
-                                temp_hand.remove((f'9{suit}', 'suits'))
-
-                            if temp_hand.count((f'{i}{suit}', 'suits')) == 2:
-                                temp_hand.remove((f'9{suit}', 'suits'))
-                            
-                            if not(i == 1 or i == 9):
-                                if not(temp_hand.count((f'{i}{suit}', 'suits')) == 0):
-                                    count += 1
-
-                        if len(temp_hand) == 13 and count == 7:
-                            return (self.players[n].player_hand ,"九子連環", self.hand_values["九子連環"])
-
-            # Thirteen Orphans (十三幺)
-            # Player has the terminal of each suit, each honor tile + any of the tiles
-            temp_hand = copy.deepcopy(self.players[n].player_hand)
-            count = 0
-            for tile_type in self.mjset.keys():
+                    if d[1] == "suits" and (d[0][0] == "1" or d[0][0] == "9"):
+                        n_terminals += 1
                 
-                if tile_type == "suits":
-                    for suit in self.mjset[tile_type]:
-                        
-                        if temp_hand.count((f'1{suit}', 'suits')) == 2:
-                            temp_hand.remove((f'1{suit}', 'suits'))
-                            count += 1
+                # 七对子类 
+                if pairs == 7:
+                    # return the 7 distinct type of tiles
+                    if n_terminals == 6:
+                        return (distinct ,"清老頭", self.hand_values["清老頭"])
+                    else:
 
-                        elif temp_hand.count((f'1{suit}', 'suits')) == 1:
-                            count += 1
+                        return (distinct ,"七對子", self.hand_values["七對子"])
+                
+                # Nine Gates (九子連環)
+                # eg: 1112345678999 + any of the 9 same suited tile
+                self.players[n].player_hand.sort()
+                temp_hand = copy.deepcopy(self.players[n].player_hand)
 
-                        if temp_hand.count((f'9{suit}', 'suits')) == 2:
-                            temp_hand.remove((f'9{suit}', 'suits'))
-                            count += 1
+                for suit in self.mjset["suits"]:
 
-                        elif temp_hand.count((f'9{suit}', 'suits')) == 1:
-                            count += 1
+                    if (f'1{suit}', 'suits') in temp_hand and (f'9{suit}', 'suits') in temp_hand:
 
-                elif tile_type == "winds" or tile_type == "dragons":
+                        if (temp_hand.count((f'1{suit}', 'suits')) == 3 or temp_hand.count((f'1{suit}', 'suits')) == 4) and (temp_hand.count(f'9{suit}', 'suits') == 3 or temp_hand.count(f'9{suit}', 'suits') == 4):
+                            
+                            # since 1s and 9s must be in the hand already, only count 2 to 8 (7 tiles)
+                            count = 0
+                            for i in range(1, 10):
+                                
+                                # if theres 4 of the first suit, remove
+                                if i == 1 and temp_hand.count((f'1{suit}', 'suits')) == 4:
+                                    temp_hand.remove((f'1{suit}', 'suits'))
 
-                    for tile in self.mjset[tile_type]:
+                                # if theres 4 of the ninth suit, remove
+                                if i == 9 and temp_hand.count((f'9{suit}', 'suits')) == 4:
+                                    temp_hand.remove((f'9{suit}', 'suits'))
 
-                        if temp_hand.count((f'{tile}', f'{tile_type}')) == 2:
-                            temp_hand.remove((f'{tile}', f'{tile_type}'))
-                            count += 1
+                                if temp_hand.count((f'{i}{suit}', 'suits')) == 2:
+                                    temp_hand.remove((f'9{suit}', 'suits'))
+                                
+                                if not(i == 1 or i == 9):
+                                    if not(temp_hand.count((f'{i}{suit}', 'suits')) == 0):
+                                        count += 1
 
-                        elif temp_hand.count((f'{tile}', f'{tile_type}')) == 1:
-                            count += 1
+                            if len(temp_hand) == 13 and count == 7:
+                                return (self.players[n].player_hand ,"九子連環", self.hand_values["九子連環"])
 
-            if count == 13 and len(temp_hand) == 13:
-                return (self.players[n].player_hand ,"十三幺", self.hand_values["十三幺"])
+                # Thirteen Orphans (十三幺)
+                # Player has the terminal of each suit, each honor tile + any of the tiles
+                temp_hand = copy.deepcopy(self.players[n].player_hand)
+                count = 0
+                for tile_type in self.mjset.keys():
+                    
+                    if tile_type == "suits":
+                        for suit in self.mjset[tile_type]:
+                            
+                            if temp_hand.count((f'1{suit}', 'suits')) == 2:
+                                temp_hand.remove((f'1{suit}', 'suits'))
+                                count += 1
+
+                            elif temp_hand.count((f'1{suit}', 'suits')) == 1:
+                                count += 1
+
+                            if temp_hand.count((f'9{suit}', 'suits')) == 2:
+                                temp_hand.remove((f'9{suit}', 'suits'))
+                                count += 1
+
+                            elif temp_hand.count((f'9{suit}', 'suits')) == 1:
+                                count += 1
+
+                    elif tile_type == "winds" or tile_type == "dragons":
+
+                        for tile in self.mjset[tile_type]:
+
+                            if temp_hand.count((f'{tile}', f'{tile_type}')) == 2:
+                                temp_hand.remove((f'{tile}', f'{tile_type}'))
+                                count += 1
+
+                            elif temp_hand.count((f'{tile}', f'{tile_type}')) == 1:
+                                count += 1
+
+                if count == 13 and len(temp_hand) == 13:
+                    return (self.players[n].player_hand ,"十三幺", self.hand_values["十三幺"])
 
         # means theres a winning hand, determine which hand has the greatest value
         else:
             
-            # # Blessing of Heaven (天糊) - Win on the first turn as the dealer
-            # # since scores limit, doesnt matter what hand the player gets as long as its valid win 
-            # if len(self.players_moved) == 0:
-            #     return (winning_hand[0], "天糊", self.hand_values["天糊"])
+            # Blessing of Heaven (天糊) - Win on the first turn as the dealer
+            # since scores limit, doesnt matter what hand the player gets as long as its valid win 
+            if len(self.players_moved) == 0:
+                return (winning_hand[0], "天糊", self.hand_values["天糊"])
             
-            # # Blessing of Earth (地糊) - Win on the dealer’s first discard
-            # if len(self.players_moved) == 1:
-            #     return (winning_hand[0], "地糊", self.hand_values["地糊"])
+            # Blessing of Earth (地糊) - Win on the dealer’s first discard
+            if len(self.players_moved) == 1:
+                return (winning_hand[0], "地糊", self.hand_values["地糊"])
             
-            # # Blessing of Man (人糊) - Win on the first turn as non-dealer
-            # if n not in self.players_moved:
-            #     return (winning_hand[0], "人糊", self.hand_values["人糊"])
-            
-
-            # return [0faan, 1n_pongs, 2n_kongs, 3n_chow, 4n_suits, 5n_winds, 6n_dragons, 7n_ckongs]
+            # Blessing of Man (人糊) - Win on the first turn as non-dealer
+            if n not in self.players_moved:
+                return (winning_hand[0], "人糊", self.hand_values["人糊"])
             
             # note: the pair of eyes will be at the last index of the w list
             hand_faan = []
+            
             for w in winning_hand:
                 
                 f = self.calc_hand_faan(w, n)
-                print(f)
                 # Check for flush
                 n_same_suits = 0
                 if w[-1][0][1] == "suits":
@@ -765,19 +862,25 @@ class Game():
                                 if meld[0][0][-1] == w[-1][0][0][-1]:
                                     n_same_suits += 1
 
+                # All Sequences (平糊) - Only sequences and a pair
+                pinghu = 0
+                if f[3] == 4:
+                    hand_faan.append((w, "平糊", self.hand_values["平糊"]))
+                    pinghu = 1
+
                 # Mixed Flush (混一色) - Only tiles of a single suit plus honor tiles 
                 if n_same_suits == 3 and f[4] == 3 and (f[5] == 1 or f[6] == 1):
                     if (f[1] + f[2] == 4): 
                         hand_faan.append((w, "混一色", min(self.hand_values["混一色"] + f[0] + self.hand_values["碰碰糊"], 13))) 
                     else:
-                        hand_faan.append((w, "混一色", min(self.hand_values["混一色"] + f[0], 13))) 
+                        hand_faan.append((w, "混一色", min(self.hand_values["混一色"] + f[0] + pinghu, 13))) 
 
                 # Pure Flush (清一色) - Only tiles of a single suit
                 if n_same_suits == 4 and f[4] == 4:
                     if (f[1] + f[2] == 4): 
                         hand_faan.append((w, "清一色", min(self.hand_values["清一色"] + f[0] + self.hand_values["碰碰糊"], 13))) 
                     else:
-                        hand_faan.append((w, "清一色", min(self.hand_values["清一色"] + f[0], 13))) 
+                        hand_faan.append((w, "清一色", min(self.hand_values["清一色"] + f[0] + pinghu, 13))) 
 
                 # Check for Honor Tile Wins
                 # Small Three Dragons (小三元) - Have 2 dragon triplets and a pair of the third (do not count points for individual dragon triplets)
@@ -817,18 +920,32 @@ class Game():
                     return hand_faan.append((w, "十八羅漢", self.hand_values["十八羅漢"]))
                 
                 # Mixed Terminals (混幺九) - Hand only contains terminals (1’s and 9’s) and honors.
-                
                 # All Terminals (清老頭) - Hand only contains terminals (1’s and 9’s) 
-                # 
 
+                if (f[1] + f[2] == 4):
+                    n_terminals = 0
+                    n_honors = 0
+                    
+                    for meld in melded:
+                        if meld[0][1] == "suits":
+                            if meld[0][0][0] == "1" or meld[0][0][0] == "9":
+                                n_terminals += 1
 
+                        elif meld[0][1] == "winds" or meld[0][1] == "dragons":
+                            n_honors += 1
+                    
+                    if n_terminals == 4 and (meld[-1][0][0] == "1" or meld[-1][0][0] == "9"):
+                        return hand_faan.append((w, "清老頭", self.hand_values["清老頭"]))
+                    
+                    if (n_terminals + n_honors == 4) and (meld[-1][0][0] == "1" or meld[-1][0][0] == "9" or meld[-1][1] == "winds" or meld[-1][1] == "dragons"):
+                        hand_faan.append((w, "混幺九", self.hand_values["混幺九"] + f[0]))
 
-                # TODO 七对子类
+            # print(hand_faan)
+            # return the hand with the greatest faan value
+            hand_faan.sort(key=lambda x:x[2])
+            return hand_faan[-1]    
 
-            return hand_faan                
-    
-
-
+        return None            
     # <End> check functions </End>
 
     
@@ -872,7 +989,7 @@ class Game():
                     self.get_input_self_touch(n, wall_tile)
 
                 # valid for all players (stealing tiles from discard)
-                elif (2 <= i <= 4):
+                elif (2 <= i <= 5):
 
                     if not(len(self.discard_pile) == 0):
 
@@ -881,14 +998,12 @@ class Game():
                             
                             # remove the pong tiles from player hand
                             d = self.discard_pile[-1]
+                            
                             for l in range(2):
                                 self.players[n].player_hand.remove(d)
 
                             # player can also pong if they have 3 tiles already in their hand instead of kong
-                            if self.players[n].player_hand.count(d) == 3:
-
-                                self.players[n].player_hand.append(d)
-
+                            # 1 tile will remain in the hand
                             
                             # if the pong is wind tile, and matching the prevailing wind, + 1 faan
                             if d[1] == 'winds' and self.mjset["winds"][self.prevailing_wind] == d[0]:
@@ -900,7 +1015,6 @@ class Game():
                             self.discard_pile.pop()
                             self.print_display_h()
                             self.throw_tile(n)
-                            self.action_history.append(i)
                             return True
                             
                         # kong 杠 
@@ -911,7 +1025,8 @@ class Game():
                             if self.players[n].player_hand.count(d) == 3:
                                 
                                 # remove the kong tiles from player hand
-                                list(filter((d).__ne__, self.players[n].player_hand))
+                                for z in range(3):
+                                    self.players[n].player_hand.remove(d)
 
                                 if d[1] == 'winds' and self.mjset["winds"][self.prevailing_wind] == d[0]:
                                     self.players[n].melded.append((d, "明杠", True))
@@ -930,12 +1045,13 @@ class Game():
                                 self.players[n].melded.remove((d, "碰", False))
                                 self.players[n].melded.append((d, "明杠", False))
 
-
                             self.discard_pile.pop()
+                            
                             self.print_display_h()
-                            self.replace_tile(n)
-                            self.throw_tile(n)
-                            self.action_history.append(i)
+
+                            self.rob_flag = True
+                            self.get_input_self_touch(n, self.tiles.pop())
+
                             return True
                             
                         # chow 吃 
@@ -979,11 +1095,16 @@ class Game():
                                 
                                 return True
                             
-                        # hu 胡
-                        # TODO
-                        # 
                         elif i == 5:
-                            pass
+
+                            d = self.discard_pile[-1]
+                            print(d)
+                            self.players[n].player_hand.append(d)
+                            
+                            if self.check_hu(n):
+                                return True
+                            else:
+                                self.players[n].player_hand.remove(d)
 
                         return False
 
@@ -991,7 +1112,7 @@ class Game():
                 pass
             
             i = 0
-
+            
 
     def get_input_self_touch(self,n, wall_tile):
         
@@ -1008,8 +1129,13 @@ class Game():
         """
         
         if len(self.players_moved) != 0:
+            
+            self.players[n].player_hand.append(wall_tile)
+            self.print_display_h()
             print(f"{wall_tile[0]} was obtained")
 
+        else:
+            self.print_display_h()
         
         u_input = 0
 
@@ -1022,9 +1148,10 @@ class Game():
                 # throw away tile from current hand
                 if u_input == 1:
                     self.throw_tile(n)
+                    self.kong_flag = 0
                     return 
                 
-                # 杠 if available
+                # 杠 if available, loop until must throw a tile
                 elif u_input == 2 and self.check_c_kang(n):
                     
                     available = []
@@ -1051,6 +1178,7 @@ class Game():
                         except TypeError and ValueError:
                             pass
                     
+                    # prevailing wind
                     if available[u_input_kong-1][1] == 'winds' and self.mjset["winds"][self.prevailing_wind] == available[u_input_kong-1][0]:
                         self.players[n].melded.append((available[u_input_kong-1], "暗杠", True))
                     else:
@@ -1063,10 +1191,14 @@ class Game():
                     replace_tile = self.tiles.pop()
                     self.players[n].player_hand.append(replace_tile)
 
-                
-                elif u_input == 3 and self.check_hu(n):
-                    pass 
+                    self.kong_flag += 1
 
+                # hu
+                elif u_input == 3:
+                
+                    if self.check_hu(n):
+                        return
+                
                 u_input = 0
                 self.print_display_h()
 
@@ -1128,7 +1260,7 @@ class Game():
                 elif j[1] == "吃":
 
                     for k in j[0]:
-                        print(f"{k} ", end="")
+                        print(f"{k[0]} ", end="")
 
             print("\n")
 
@@ -1153,18 +1285,24 @@ class Game():
         """
         
         i = 0
+        distinct = sorted(list(set(self.players[n].player_hand)))
         # prompt user for input
         # reprompt if user input is not a number within 1 -> no of tiles in hand
-        while not(1<= i <=len(self.players[n].player_hand)+ 1):
+        while not(1<= i <= len(distinct)+ 1):
             try :
-                i = int(input(f"Throw away a tile (1-{len(self.players[n].player_hand)}): "))
+                print("Distinct tiles: ", end="")
+                for tile in distinct:
+                    print(f"{tile[0]} ", end="")
+                print("")
+                i = int(input(f"Throw away a tile (1-{len(distinct)}): "))
 
             except ValueError:
                 pass
         # remove tile from hand
-        removed = self.players[n].player_hand.pop(i-1)
+        print(distinct[i-1])
+        self.players[n].player_hand.remove(distinct[i-1])
         # add removed tile to discard pile
-        self.discard_pile.append(removed)
+        self.discard_pile.append(distinct[i-1])
 
 
     def update_state(self):
@@ -1261,15 +1399,16 @@ class Game():
         If the tile drawn is flower / season tile, replace it
         """
 
-        tile = self.tiles.pop(0)
-
-        while (tile[1] == "flowers" or tile[1] == "seasons"):
-            self.players[n].player_flowers_seasons.append(tile)
-            # calculate the faan value of the flowers/ season of the player's hand
-            self.calc_fs_faan(n)
+        if len(self.tiles) != 0:
             tile = self.tiles.pop(0)
 
-        self.players[n].player_hand.append(tile)
+            while (tile[1] == "flowers" or tile[1] == "seasons"):
+                self.players[n].player_flowers_seasons.append(tile)
+                # calculate the faan value of the flowers/ season of the player's hand
+                self.calc_fs_faan(n)
+                tile = self.tiles.pop(0)
+
+            self.players[n].player_hand.append(tile)
         
 
     def generate_tiles(self):
@@ -1322,6 +1461,27 @@ class Game():
             li.append(copy.deepcopy(d))
 
         self.tile_table = li
+
+
+    def game_reset(self):
+
+        """
+        Reset the entire game after a player has won / no player has won when wall runs out of tiles
+        """
+        self.player_turn = 0
+        self.flag_wall = False
+        self.players = [Player(i) for i in range(self.player_count)]
+        self.tiles = []
+        self.discard_pile = []
+        self.move_table = [[], [], [], []]
+        self.tile_table = []
+
+        self.players_moved = []
+        self.prevailing_track = []
+        
+        self.winning_hand = None
+        self.kong_flag = 0
+        self.rob_flag = False
 
 
 if __name__ == "__main__":

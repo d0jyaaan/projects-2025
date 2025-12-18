@@ -13,6 +13,7 @@ import random
 import asyncio
 import time
 import math
+import json
 
 load_dotenv()
 token = os.getenv('DISCORD_TOKEN')
@@ -25,12 +26,8 @@ client = discord.Client(intents=intents)
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+player_elo = {}
 # Version 1.0
-
-@bot.event
-async def on_ready():
-    print("Running")
-
 
 TILES_UNICODE = {
     # Dragons
@@ -84,6 +81,8 @@ MOVE_PIORITY = {
 
 BOLD_START = '\033[1m'
 BOLD_END = '\033[0m'
+
+queue_lock = asyncio.Lock()
 
 active_games = {}
 queueing = []
@@ -186,6 +185,7 @@ class Game():
                     "flowers": ["梅","蘭","竹","菊"],
                     "seasons": ["春","夏","秋","冬"]}
 
+        self.elos = [None, None, None, None]
 
 
     def game_reset(self, b):
@@ -299,7 +299,6 @@ class Game():
             Player hand has the suit tiles of the same suit with arrangement (n-1, n, n+1) or (n, n+1, n+2) or (n-2, n-1, n )
             Discarded tile must be by previous player
         """
-        
         
         if len(self.players_moved) == 0:
             return None
@@ -749,6 +748,9 @@ class Game():
                 - give faan to the player if the flower / season corresponds to them 
                 - give player another tile in place of the flower
                 [repeat until all the tiles in players hand is a non flower / season tile]
+
+        Get the elo of each player
+
         """
 
         self.generate_tiles()
@@ -768,6 +770,19 @@ class Game():
         # initialise the evaluation table for the first time
         for n in range(self.player_count):
             self.evaluate_table(n)
+
+        # load dictionary containing player elo
+        with open("player_elo.json", "r") as json_file:
+            player_elo = json.load(json_file)
+
+        for i, j in enumerate(self.player_ids):
+            
+            s_j = str(j)
+
+            if s_j not in player_elo.keys():
+                player_elo[s_j] = 1000
+
+            self.elos[i] = player_elo[s_j]
 
 
     def assign_tiles(self, n):
@@ -926,6 +941,11 @@ class Game():
         self.player_turn = (self.player_turn + 1 ) % 4
 
 
+@bot.event
+async def on_ready():
+    print("Running")
+
+
 @bot.command()
 async def queue(ctx):
 
@@ -941,6 +961,7 @@ async def queue(ctx):
         return
     
     queueing.append(user)
+    players.append(user)
     seconds = 0
 
     # Define leave button
@@ -958,44 +979,57 @@ async def queue(ctx):
     view = LeaveQueueView()
 
     # Function to create/update embed
-    def update_embed():
+    async def update_embed():
+        u = await bot.fetch_user(user)
         embed = discord.Embed(
-            title=f"<@{user}> joined the queue!",
+            title=f"*{u.name}* joined the queue!",
             description=f"*Queueing for {seconds} seconds*",
             color=0x00ff00
         )
         return embed
 
     # Send initial embed
-    queue_message = await ctx.send(embed=update_embed(), view=view)
+    queue_message = await ctx.send(embed=await update_embed(), view=view)
 
     # Timer loop
     while user in queueing:
 
         await asyncio.sleep(1)
         seconds += 1
+        await queue_message.edit(embed=await update_embed(), view=view)
 
-        # Update embed
-        await queue_message.edit(embed=update_embed(), view=view)
+        async with queue_lock:
 
-        # Check if enough players to start game
-        if len(queueing) >= 4:
+            # Check if enough players to start game
+            if len(queueing) < 4:
+                continue
 
-            mentions = ""
+            matched_players = queueing[:4]
+            queueing[:4] = [] 
 
-            for u in queueing[:1]:
-                mentions += f"<@{u}>\n"
+            mentions = "\n".join(f"<@{u}>" for u in matched_players)
 
-            start_em = discord.Embed(title=f"Matched found!",
-                                     description=f"Game starting with: \n{mentions}",
-                                     color=0x00ff00)
-            
-            await ctx.send(embed=start_em)
-            # remove these players from queue
-            queueing[:4] = []
-            break
+            start_em = discord.Embed(
+                title="Match found!",
+                description=f"Game starting with:\n{mentions}",
+                color=0x00ff00
+            )
 
-    
+            game_id = generate_id()
+            game = Game(game_id)
+            game.player_ids = matched_players
+            active_games[game_id] = game
+
+            for pid in matched_players:
+                players.append(pid)
+                game_u = await bot.fetch_user(pid)
+                await game_u.send(embed=start_em)
+
+            await loading_bar(game, False)
+            await run_game(game_id)
+
+            break 
+
 
 @bot.command()
 async def run(ctx):
@@ -1074,7 +1108,7 @@ async def run(ctx):
         async def start_game(self, interaction, button):
             # Means there is 4 players and game can start
             # TODO for now == 3 for debug but should be == 0
-            if game.player_ids.count(None) == 3:
+            if game.player_ids.count(None) == 0:
                 game.start_flag = True
 
             else:
@@ -1104,7 +1138,11 @@ async def run(ctx):
             await msg.delete()
 
     else:
-        await run_game(ctx)
+        for id in game.player_ids:
+            players.append(id)
+        
+        await loading_bar(game, True)
+        await run_game(ctx.channel.id)
         await msg.delete()
 
 
@@ -1112,133 +1150,153 @@ async def run(ctx):
 async def quit(ctx):
 
     """
-    Terminate the mahjong game in the channel that this command was sent in.
+    Terminate the mahjong game via DM voting.
     Only allow the active players to end the game (Prevent trolling)
     """
 
-    if ctx.channel.id not in active_games.keys():
-        await ctx.send("There is no active game in this channel. To start a game type !run")
-        return
+    # Find the game
+    if ctx.channel.id in active_games:
+        game = active_games[ctx.channel.id]
+        channel_id = ctx.channel.id
 
-    game = active_games[ctx.channel.id]
 
-    # If literally no players joined
+    else:
+        game = None
+        for active in active_games.values():
+            if ctx.author.id in active.player_ids:
+                game = active
+                channel_id = game.channel
+                break
+
+        if game is None:
+            await ctx.send("There is no active game in this channel.")
+            return
+
+    # If no players actually joined
     if game.player_ids.count(None) == 4:
-        await ctx.send("The mahjong game has been ended. Thanks for playing!")
+
         del active_games[ctx.channel.id]
+        await ctx.send("The mahjong game has been ended. Thanks for playing!")
         return
 
-    quit_list = [None, None, None, None]
-    seconds = 20
+    seconds = 30
+    votes = [None, None, None, None]
+    messages = [None, None, None, None]
+    views = [None, None, None, None]
 
-    # Holder for DM message objects + views
-    dm_messages = [None, None, None, None]
-    dm_views = [None, None, None, None]
-
-    def build_quit_embed():
+    def build_vote_embed():
         embed = discord.Embed(
             title="End Game?",
-            description=f"*{seconds} sec left for voting*",
+            description=f"*{seconds} seconds remaining*",
             color=0x00ff00
         )
 
-        for i in range(4):
-            pid = game.player_ids[i]
+        for i, pid in enumerate(game.player_ids):
             if pid is None:
                 continue
 
-            if quit_list[i] is True:
+            if votes[i] is True:
                 status = f"<@{pid}> ✅"
-            elif quit_list[i] is False:
+            elif votes[i] is False:
                 status = f"<@{pid}> ❌"
             else:
                 status = f"<@{pid}> waiting..."
 
-            embed.add_field(name=f"Player {i+1}", value=status, inline=False)
+            embed.add_field(
+                name=f"Player {i + 1}",
+                value=status,
+                inline=False
+            )
 
         return embed
 
-    async def update_all():
-        embed = build_quit_embed()
+    async def update_all_voting_messages():
+        embed = build_vote_embed()
         for i in range(4):
-            if dm_messages[i] is not None:
-                await dm_messages[i].edit(embed=embed, view=dm_views[i])
+            if messages[i] is not None:
+                await messages[i].edit(embed=embed, view=views[i])
 
-    class QuitView(discord.ui.View):
-
-        def __init__(self, index):
+    class QuitVoteView(discord.ui.View):
+        def __init__(self, player_index):
             super().__init__(timeout=None)
-            self.index = index
+            self.index = player_index
 
         @discord.ui.button(label="Yes", style=discord.ButtonStyle.green)
         async def yes_button(self, interaction: discord.Interaction, button):
-            if interaction.user.id == game.player_ids[self.index]:
-                quit_list[self.index] = True
+            if interaction.user.id != game.player_ids[self.index]:
                 await interaction.response.defer()
-                await update_all()
+                return
+
+            votes[self.index] = True
+            await interaction.response.defer()
+            await update_all_voting_messages()
 
         @discord.ui.button(label="No", style=discord.ButtonStyle.red)
         async def no_button(self, interaction: discord.Interaction, button):
-            if interaction.user.id == game.player_ids[self.index]:
-                quit_list[self.index] = False
+            if interaction.user.id != game.player_ids[self.index]:
                 await interaction.response.defer()
-                await update_all()
+                return
 
-    # Send DM to each player
-    for i in range(4):
-        pid = game.player_ids[i]
+            votes[self.index] = False
+            await interaction.response.defer()
+            await update_all_voting_messages()
+
+    # Send initial DMs
+    for i, pid in enumerate(game.player_ids):
         if pid is None:
             continue
 
         user = await bot.fetch_user(pid)
+        views[i] = QuitVoteView(i)
+        messages[i] = await user.send(
+            embed=build_vote_embed(),
+            view=views[i]
+        )
 
-        dm_views[i] = QuitView(i)
-        embed = build_quit_embed()
-
-        dm_messages[i] = await user.send(embed=embed, view=dm_views[i])
-
-    # Countdown timer
+    # Countdown loop
     while seconds > 0:
-        await asyncio.sleep(1)
-        seconds -= 1
-        await update_all()
-
-        # Early termination if everyone voted Yes
-        if quit_list.count(True) == (4 - game.player_ids.count(None)):
+        # End early if all active players have voted
+        active_players = 4 - game.player_ids.count(None)
+        if votes.count(None) == 0 or votes.count(None) == (4 - active_players):
             break
 
-    # Disable all buttons
-    for v in dm_views:
-        if v:
-            for but in v.children:
-                but.disabled = True
+        await asyncio.sleep(1)
+        seconds -= 1
+        await update_all_voting_messages()
 
-    await update_all()
+    # Disable buttons
+    for view in views:
+        if view:
+            for child in view.children:
+                child.disabled = True
+
+    await update_all_voting_messages()
 
     # Count votes
-    yes_votes = quit_list.count(True)
+    yes_votes = votes.count(True)
     needed = math.floor((4 - game.player_ids.count(None)) / 2) + 1
 
     if yes_votes >= needed:
-        del active_games[ctx.channel.id]
+        del active_games[channel_id]
 
-        # Send DM end message
         end_embed = discord.Embed(
-            title="The game has ended. Thanks for playing!",
+            title="The game has ended. The game will terminate after this move.",
+            description="Thanks for playing!",
             color=0x00ff00
         )
+
         for pid in game.player_ids:
             if pid:
                 user = await bot.fetch_user(pid)
                 await user.send(embed=end_embed)
 
     else:
-        # Continue game
         continue_embed = discord.Embed(
-            title=f"Vote Results: {yes_votes}/{4 - game.player_ids.count(None)} voted YES",
+            title=f"Vote Result: {yes_votes}/{4 - game.player_ids.count(None)} YES",
             description="The game will continue.",
             color=0xffd000
         )
+
         for pid in game.player_ids:
             if pid:
                 user = await bot.fetch_user(pid)
@@ -1258,23 +1316,19 @@ async def h(ctx):
     await ctx.send(embed=em)
 
 
-# @bot.command()
 # run game
-async def run_game(ctx):
+@bot.command()
+async def run_game(game_id):
 
     """
     Function that handles all of mahjong gameplay loop
     """
 
-    game = Game(ctx.channel.id)
-    active_games[ctx.channel.id] = game
+    game:Game = active_games[game_id]
 
-    # temporary
-    game.player_ids = [512192531220398090, 512192531220398090, 512192531220398090, 512192531220398090]
-    game.players = [Player(0, 512192531220398090), Player(1, 512192531220398090),Player(2, 512192531220398090),Player(3, 512192531220398090)]
-    
-    # loading bar
-    await loading_bar(ctx)
+    # # temporary
+    # game.player_ids = [512192531220398090, 512192531220398090, 512192531220398090, 512192531220398090]
+    # game.players = [Player(0, 512192531220398090), Player(1, 512192531220398090),Player(2, 512192531220398090),Player(3, 512192531220398090)]
 
     while True:
 
@@ -1282,13 +1336,13 @@ async def run_game(ctx):
         #     ("9筒", "suits")
         # ]
 
-        # game.players[0].player_hand = [
+        # game.players[1].player_hand = [
         #     ("1筒", "suits"), ("1筒", "suits"), ("1筒", "suits"), 
         #     ("2筒", "suits"), ("2筒", "suits"), ("2筒", "suits"), 
         #     ("3筒", "suits"), ("3筒", "suits"), ("3筒", "suits"), 
-        #     ("6筒", "suits"), ("6筒", "suits"), ("9筒", "suits"),
+        #     ("6筒", "suits"), ("6筒", "suits"),
         #     ("9筒", "suits"),  ("9筒", "suits") 
-        #     ]   
+        # ]   
 
         if game.channel not in active_games.keys():
             return
@@ -1357,7 +1411,7 @@ async def run_game(ctx):
                 await asyncio.gather(*task)
                 
             else:
-                
+
                 # other than the first move, every player can either pong, kong, chow, hu or pass
                 # the active player can also self touch
                 # piority is given in the order of: pass, self touch, chow, pong, kong, hu
@@ -1408,9 +1462,10 @@ async def run_game(ctx):
                 
                 # Show each player the winning hand and winning player
                 await display_hu(game)
+                # Update the elo of all the players in this game
+                await calculate_rating(game)
                 # players vote to go next game or choose to end session
                 await handle_go_next(game, True)
-
                 break
 
             # update prevailing wind
@@ -2103,15 +2158,37 @@ async def display_player_info(game:Game, user, n , hand_list, melded_list, fs_li
     return p_view.result
 
 
-async def loading_bar(ctx):
+async def loading_bar(game:Game, load_type):
 
     """
     Displays an animated loading bar in the channel.
+    Type Represents whether to send loading bar into channel or send individually
     """
     
     # Loading bar
-    message = await ctx.send("Loading...")
-    total_steps = 20
+    # send the loading bar into the channel
+    if load_type is True:
+
+        channel_id = game.channel
+        channel = await bot.get_channel(channel_id)
+        
+        await display_loading_bar(channel)
+
+    # send each player individually the loading bar
+    elif load_type is False:
+
+        for id in game.player_ids:
+            
+            user = await bot.fetch_user(id)
+
+            await display_loading_bar(user)
+
+
+async def display_loading_bar(channel):
+
+    message = await channel.send("Loading...")
+
+    total_steps = 5
     for i in range(total_steps + 1):
         progress = i / total_steps
         filled_blocks = int(progress * 10) # 10 blocks for the bar
@@ -2123,10 +2200,10 @@ async def loading_bar(ctx):
         percentage = int(progress * 100)
         
         await message.edit(content=f"Loading: [{bar}] {percentage}%")
-        await asyncio.sleep(0.2) # Simulate work being done
+        await asyncio.sleep(0.05) 
 
     await message.edit(content="Let's Play Mahjong!")
-    message.delete()
+    await message.delete()
 
 
 async def display_game_info(game:Game, i, user, hand_list, melded_list, fs_list):
@@ -2149,17 +2226,77 @@ async def display_game_info(game:Game, i, user, hand_list, melded_list, fs_list)
         hand_string = ""
         # if the player is the messaged player, show their tiles
         if i == j:
-            embed.add_field(name=f"{game.mjset['winds'][j]} *{user.name}*", value=f'> Hand: {hand_list[j]}\n> Melded: {melded_list[j]}\n> Flowers: {fs_list[j]}',inline=False)
+            embed.add_field(name=f"{game.mjset['winds'][j]} *{user.name}* (*{game.elos[j]}*)", value=f'> Hand: {hand_list[j]}\n> Melded: {melded_list[j]}\n> Flowers: {fs_list[j]}',inline=False)
 
         else:
             for n in range(len(p.player_hand)):
                 hand_string += "█ "
 
-            embed.add_field(name=f"{game.mjset['winds'][j]} {user.name}", value=f'> Hand: {hand_string}\n> Melded: {melded_list[j]}\n> Flowers: {fs_list[j]}',inline=False)
+            embed.add_field(name=f"{game.mjset['winds'][j]} {user.name} (*{game.elos[j]}*)", value=f'> Hand: {hand_string}\n> Melded: {melded_list[j]}\n> Flowers: {fs_list[j]}',inline=False)
         
     # game info
     msg = await user.send(embed=embed)
     return msg
+
+
+async def calculate_rating(game:Game):
+
+    """
+    For 4 player game of mahjong, calculate the rating for each player where 
+        
+    winner + rating 
+        while 
+    loser - rating
+    
+    Amount of rating players gain/lose is based on their initial rating and the winning player's faan
+    """
+    
+    w_elo = game.elos[game.player_turn]
+    mult = 1 + math.log(game.winning_hand[2])
+
+    change = [0, 0, 0, 0]
+    gain = 0
+
+    elo_embed = discord.Embed(title="Final Elo Score", 
+                                color=0x00ff00)
+    
+    for i in range(4):
+
+        if i == game.player_turn:
+            continue
+
+        expected = 1 / (1 + 10 ** ((game.elos[i] - w_elo) / 400))
+        delta = 20 * mult * (1 - expected)
+
+        change[i] = -round(delta)
+        gain += round(delta)
+    
+    # winning player gain elo
+    change[game.player_turn] = gain
+    print(change)
+    for i in range(4):
+
+        if change[i] >= 0:
+            s = f"+{change[i]}"
+        else:
+            s = f"{change[i]}"
+
+        # add player elo to embed
+        user = await bot.fetch_user(game.player_ids[i])
+        elo_embed.add_field(name=f"{user.name} *{game.elos[i]}* {s}", value = "", inline=False)
+        # calculate player's new elo
+        s_pid = str(game.player_ids[i])
+        player_elo[s_pid] = game.elos[i] + change[i]
+
+    # send to each player their new elo
+    for pid in game.player_ids:
+        # get user
+        user = await bot.fetch_user(pid)
+        await user.send(embed=elo_embed)
+    
+    # write the new player elo dict to json file
+    with open("player_elo.json", 'w') as json_file:
+        json.dump(player_elo, json_file, indent=4)
 
 
 def generate_id():
@@ -2247,6 +2384,6 @@ def game_info(game:Game):
         hand_list.append(hand_string)
         
     return hand_list, melded_list, fs_list
-
+    
 
 bot.run(token, log_handler=handler, log_level=logging.DEBUG)

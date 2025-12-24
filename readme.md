@@ -1,4 +1,4 @@
-# MjCord
+# Discord Mahjong by d0jyaaan
 
 MjCord is a Discord bot that enables four players to play Hong Kong–style Mahjong entirely through Discord direct messages. The bot manages game state, enforces rules, resolves move priority, and calculates scoring, allowing players to focus on gameplay without manual bookkeeping.
 

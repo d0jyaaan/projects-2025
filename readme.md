@@ -87,19 +87,7 @@ Maximum scoring is capped at 13 faan.
 
 ---
 
-## Design Considerations
-
-- Strictly four-player gameplay
-- No public exposure of hands or private state
-- No external dependencies beyond Discord
-- Emphasis on correctness and rule enforcement
-- Designed for asynchronous, turn-based interaction
-
----
-
-## Project Status
-
-MjCord is an active personal project.  
-Rules, scoring, and flow may change as the implementation evolves.
-
-Issues and improvement suggestions are welcome.
+## Developer's Note
+Current this program has not been tested exhaustively by 4 player's at once
+Any suggestions or recommendations are welcomed. Please do report any bugs or errors that occur.
+In the future, some additional features like an AI you can play against to fill in empty lobbies
